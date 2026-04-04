@@ -118,8 +118,31 @@ Options:
             # Allow worker to finish
             await asyncio.sleep(5)
             worker_task.cancel()
+            
+            # GENERATE REPORTS (Phase IV Visibility)
+            async with AsyncSession(engine) as report_session:
+                reporter = AuditReporter(report_session)
+                res = await reporter.generate_summary_report()
+                if res.get("html"):
+                    auditor_logger.info(f"Local Audit Report Live: {res['html']}")
+                
         except Exception as e:
             auditor_logger.critical(f"Local Execution Failure: {e}")
+        finally:
+            await engine.dispose()
+        return
+
+    if "--report" in sys.argv:
+        try:
+            async with AsyncSession(engine) as report_session:
+                reporter = AuditReporter(report_session)
+                res = await reporter.generate_summary_report()
+                if res.get("html"):
+                    auditor_logger.info(f"Stakeholder Report Generated: {res['html']}")
+                else:
+                    auditor_logger.warning("No report generated (likely no data).")
+        except Exception as e:
+            auditor_logger.critical(f"Reporting Failure: {e}")
         finally:
             await engine.dispose()
         return

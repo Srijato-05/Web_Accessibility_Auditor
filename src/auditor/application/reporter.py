@@ -9,15 +9,23 @@ Responsibilities:
   - Generating premium, responsive HTML dashboards for stakeholders.
 """
 
+import asyncio
 import os
+import sys
 import json
-import logging
+
+# IDE PATH RECONCILIATION: Ensuring import stability for external scripts
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.future import select # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.audit_session import SessionStatus # type: ignore
 
 class AuditReporter:
     """
@@ -34,30 +42,32 @@ class AuditReporter:
         """Generates both HTML and JSON reports for the most recent session."""
         os.makedirs(output_dir, exist_ok=True)
         
-        # 1. Fetch Latest Session
-        stmt = select(AuditSessionModel).order_by(AuditSessionModel.start_time.desc()).limit(1)
+        # 1. Fetch Latest Completed Session
+        stmt = select(AuditSessionModel).where(
+            AuditSessionModel.status == SessionStatus.COMPLETED
+        ).order_by(AuditSessionModel.started_at.desc()).limit(1)
         res = await self.session.execute(stmt)
         session_record = res.scalar_one_or_none()
         
         if not session_record:
-            self.logger.warning("Reporting Abort: No audit data available in persistence.")
+            self.logger.warning("Reporting Abort: No completed audit data available in persistence.")
             return {}
 
         # 2. Fetch Violations
-        v_stmt = select(ViolationModel).where(ViolationModel.session_id == session_record.session_id)
+        v_stmt = select(ViolationModel).where(ViolationModel.session_id == session_record.id)
         v_res = await self.session.execute(v_stmt)
         violations = v_res.scalars().all()
 
         # 3. Serialize Data
         report_data = {
-            "session_id": session_record.session_id,
-            "url": session_record.url,
-            "start_time": session_record.start_time.isoformat(),
-            "end_time": session_record.end_time.isoformat() if session_record.end_time else None,
+            "session_id": str(session_record.id),
+            "url": session_record.target_url,
+            "start_time": session_record.started_at.isoformat() if session_record.started_at else None,
+            "end_time": session_record.completed_at.isoformat() if session_record.completed_at else None,
             "total_violations": len(violations),
             "violations": [
                 {
-                    "rule_id": v.rule_id,
+                    "rule_id": v.id,
                     "impact": v.impact,
                     "description": v.description,
                     "selector": v.selector,

@@ -276,12 +276,12 @@ class PlaywrightEngine(IBrowserEngine):
 
     async def _get_dynamic_timeout(self, page: Page, url: str) -> int:
         """Adapts timeout based on hardware load and domain profile."""
-        base_timeout = 30000
+        base_timeout = 60000 # Increased base for heavy Gov portals
         import psutil # type: ignore
         cpu = psutil.cpu_percent()
         if cpu > 80:
-            base_timeout = 60000
-            self.logger.warning(f"Engine Stress Detected [{cpu}%]. Scaling timeout to 60s.")
+            base_timeout = 120000
+            self.logger.warning(f"Engine Stress Detected [{cpu}%]. Scaling timeout to 120s.")
         return base_timeout
 
     # --------------------------------------------------------------------------
