@@ -27,7 +27,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 package-mode = true
-packages = [{include = "auditor"}]
+packages = [{include = "auditor", from = "src"}]
 
 [dependency-groups]
 dev = [

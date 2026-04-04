@@ -45,3 +45,4 @@ coverage/
 .pytest_cache/
 .ruff_cache/
 pyrightconfig.json
+reports/

@@ -11,8 +11,8 @@ import asyncio
 import logging
 from typing import List, Optional, Dict, Any, Union, Annotated
 from datetime import datetime
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select, update, delete
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auditor.domain.models import AuditTarget, DomainStatus
 from auditor.domain.target_repository import ITargetRepository
@@ -59,8 +59,8 @@ class SqlAlchemyTargetRepository(ITargetRepository):
         try:
             self.logger.debug("Executing Domain Extraction Query...")
             stmt = select(TargetModel).where(TargetModel.status != DomainStatus.PAUSED)
-            result = await self.db_session.execute(stmt)
-            model_instances = result.scalars().all()
+            result = await self.db_session.exec(stmt)
+            model_instances = result.all()
             
             self.logger.debug(f"Aggregation complete. {len(model_instances)} active targets identified.")
             
@@ -87,8 +87,8 @@ class SqlAlchemyTargetRepository(ITargetRepository):
         """Retrieves a target from the repository by its unique URL."""
         try:
             stmt = select(TargetModel).where(TargetModel.url == url)
-            result = await self.db_session.execute(stmt)
-            model_inst = result.scalars().first()
+            result = await self.db_session.exec(stmt)
+            model_inst = result.first()
             
             if not model_inst:
                 return None

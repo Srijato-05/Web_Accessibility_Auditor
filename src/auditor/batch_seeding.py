@@ -10,15 +10,16 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from typing import List, Dict, Any, Optional, Tuple
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from typing import List, Dict, Any, Optional, Tuple, cast
+from sqlmodel import SQLModel, create_async_engine, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auditor.infrastructure.persistence_models import Base
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel, TargetModel
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
 from auditor.domain.models import AuditTarget, DomainStatus
 from auditor.shared.logging import auditor_logger
 
-DATABASE_URL = "sqlite+aiosqlite:///./audit_results.db"
+DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 
 # Expanded Category Matrix
 DEFAULT_SECTOR_MATRIX = {
@@ -133,12 +134,12 @@ async def main():
     print("[Auditor] Initializing Advanced Seeding Engine...")
     
     engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # SQLModel alternative to Base.metadata.create_all
+        await conn.run_sync(SQLModel.metadata.create_all)
 
-    async with async_session_factory() as db_session:
+    async with AsyncSession(engine) as db_session:
         batch_repo = SqlAlchemyTargetRepository(db_session)
         
         added, skipped = 0, 0

@@ -40,7 +40,7 @@ def setup_auditor_logging(level=logging.INFO):
     logger.addHandler(ch)
 
     # Structured JSON File Handler for Batch audits
-    fh = logging.FileHandler("auditor.log")
+    fh = logging.FileHandler("reports/logs/auditor.log")
     fh.setFormatter(logging.Formatter('{"timestamp": "%(asctime)s", "level": "%(levelname)s", "name": "%(name)s", "message": "%(message)s"}'))
     logger.addHandler(fh)
 

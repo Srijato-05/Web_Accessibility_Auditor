@@ -12,22 +12,15 @@ from uuid import UUID
 from datetime import datetime
 
 # IDE Pathing Resolution & Relative Import Resilience
-from sqlalchemy import select, update, delete, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select, update, delete, func
+from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.orm import selectinload
 
 import asyncio
 import os
 import sys
 
-# IDE PATH RECONCILIATION: Redundant path hinting for static analysis
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _root not in sys.path:
-    sys.path.insert(0, _root)
-
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy.orm import selectinload
-
-from auditor.infrastructure.persistence_models import Base, AuditSessionModel, ViolationModel
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
 from auditor.domain.models import AuditTarget
 from auditor.shared.logging import auditor_logger
@@ -124,8 +117,8 @@ class SqlAlchemyAuditRepository(IAuditRepository):
         """Aggregates the most recent audit sessions from the ledger."""
         try:
             stmt = select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()).limit(limit).options(selectinload(AuditSessionModel.violations))
-            result = await self.db_session.execute(stmt)
-            models = result.scalars().all()
+            result = await self.db_session.exec(stmt)
+            models = result.all()
             
             sessions = []
             for m in models:

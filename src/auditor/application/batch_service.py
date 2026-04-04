@@ -13,21 +13,27 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, cast
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
+from auditor.infrastructure.playwright_engine import PlaywrightEngine
+from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
+from auditor.domain.crawler import LinkDiscoveryService
+from auditor.application.audit_service import AuditService
 from auditor.application.crawl_service import CrawlService
 from auditor.domain.target_repository import ITargetRepository
 from auditor.domain.models import AuditTarget, DomainStatus
 from auditor.shared.logging import auditor_logger
 from auditor.domain.exceptions import BatchError, RepositoryError
+from auditor.infrastructure.persistence_models import TargetModel
 from auditor.domain.rules_nexus import RulesNexus
 
 class BatchAuditManager:
@@ -38,18 +44,12 @@ class BatchAuditManager:
     to ensure database integrity across parallel workloads.
     """
     
-    def __init__(
-        self, 
-        session_factory: async_sessionmaker,
-        crawl_service: CrawlService
-    ):
-        self.session_factory = session_factory
-        self.crawl_service = crawl_service
-        self.logger = auditor_logger.getChild("BatchOrchestrator")
+    def __init__(self, engine: Any):
+        self.engine = engine
+        self.logger = auditor_logger.getChild("BatchProcess")
         # Global concurrency control for domain-level parallelism
         self.max_concurrent_domains: int = 3 
         self._semaphore = asyncio.Semaphore(self.max_concurrent_domains)
-        self.logger = auditor_logger.getChild("BatchProcess")
         
         # Global Telemetry
         self.telemetry: Dict[str, Any] = {
@@ -61,31 +61,12 @@ class BatchAuditManager:
             "average_processing_time": 0.0
         }
 
-    # --------------------------------------------------------------------------
-    # ENGINE SCHEDULING & PRIORITY LOGIC
-    # --------------------------------------------------------------------------
-    
-    async def _calculate_task_priority(self, domain: AuditTarget) -> int:
-        """
-        Calculates a priority score based on domain health and audit age.
-        Higher score = Higher Priority.
-        """
-        score = 0
-        if domain.status == DomainStatus.FAILED:
-            score += 50  # Prioritize recovery
-        
-        if domain.last_audit_at:
-            delta = datetime.now() - domain.last_audit_at
-            score += int(delta.total_seconds() / 3600)  # Prioritize stale targets
-            
-        return score
-
     async def run_batch_audit(self) -> Dict[str, Any]:
         """Main entry point for starting a concurrent batch process."""
         self.logger.info("Starting Parallel Batch Audit Process...")
         
         try:
-            async with self.session_factory() as session:
+            async with AsyncSession(self.engine) as session:
                 target_repo = SqlAlchemyTargetRepository(session)
                 domains = await target_repo.get_active_domains()
             
@@ -95,10 +76,9 @@ class BatchAuditManager:
             
             self.logger.info(f"Target Queue Identified: {len(domains)} domains scheduled for audit.")
             
-            tasks = [self._process_domain_audit(domain) for domain in domains]
+            tasks = [self._process_domain_audit(domain) for domain in cast(List[AuditTarget], domains)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # Simple aggregation of results
             summary = {
                 "total": len(results),
                 "success": len([r for r in results if r is True]),
@@ -108,7 +88,8 @@ class BatchAuditManager:
             return summary
             
         except Exception as e:
-            self.logger.critical(f"ORCHESTRATOR FAILURE: {e}")
+            import traceback
+            self.logger.critical(f"ORCHESTRATOR FAILURE: {e}\n{traceback.format_exc()}")
             raise BatchError(f"Autonomous orchestrator failure: {e}")
 
     async def _process_domain_audit(self, domain: AuditTarget) -> bool:
@@ -117,20 +98,28 @@ class BatchAuditManager:
             self.logger.info(f"Target Audit Execution START: {domain.url}")
             
             try:
-                # 1. Isolated Session Context
-                async with self.session_factory() as session:
+                # 1. Isolated Session and Service Context
+                async with AsyncSession(self.engine) as session:
+                    # Fresh service stack per domain audit
                     audit_repo = SqlAlchemyAuditRepository(session)
                     batch_repo = SqlAlchemyTargetRepository(session)
+                    audit_service = AuditService(None, audit_repo)
+                    
+                    link_extractor = PlaywrightLinkExtractor()
+                    discovery_service = LinkDiscoveryService(link_extractor)
+                    crawl_service = CrawlService(
+                        audit_service=audit_service,
+                        crawler_service=discovery_service,
+                        max_depth=2,
+                        max_pages=20
+                    )
                     
                     # 2. Status Transition: CRAWLING
                     domain.mark_crawling()
                     await batch_repo.update_domain(domain)
                     
                     # 3. Recursive Crawl & Audit Deployment
-                    # Note: CrawlService currently doesn't use the session, 
-                    # but it delegates to AuditService which uses audit_repo.
-                    # We should ensure crawl_service is also session-aware if needed.
-                    await self.crawl_service.execute_site_crawl(domain.url)
+                    await crawl_service.run(domain.url)
                     
                     # 4. Status Transition: ACTIVE
                     domain.mark_active()
@@ -142,21 +131,17 @@ class BatchAuditManager:
             except Exception as e:
                 self.logger.error(f"Target Audit Execution FAILURE for {domain.url}: {e}")
                 return False
-
-    # --------------------------------------------------------------------------
-    # SYSTEM ANALYTICS & MONITORING LAYER
-    # --------------------------------------------------------------------------
+        
+        # Fallback return for absolute safety
+        return False
 
     async def get_system_health_report(self) -> Dict[str, Any]:
         """Synthesizes a system health report for the monitored targets."""
-        self.logger.debug("Synthesizing System Health Report...")
-        
         try:
-            async with self.session_factory() as session:
+            async with AsyncSession(self.engine) as session:
                 target_repo = SqlAlchemyTargetRepository(session)
                 domains = await target_repo.get_active_domains()
             
-            # Professional Aggregation Logic
             status_counts = {
                 "active": sum(1 for d in domains if d.status == DomainStatus.ACTIVE),
                 "crawling": sum(1 for d in domains if d.status == DomainStatus.CRAWLING),

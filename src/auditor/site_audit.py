@@ -1,22 +1,42 @@
 import asyncio
 import sys
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+import os
+
+# IDE PATH RECONCILIATION: Redundant path hinting for static analysis
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 # Extreme Registry Imports
-from auditor.infrastructure.persistence_models import Base
-from auditor.infrastructure.sqlalchemy_repository import SqlAlchemyAuditRepository
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
+from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
 from auditor.infrastructure.playwright_engine import PlaywrightEngine
 from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
-from auditor.domain.crawler import CrawlerService
+from auditor.domain.crawler import LinkDiscoveryService
 from auditor.application.audit_service import AuditService
-from auditor.application.crawl_service import SiteAuditManager
+from auditor.application.crawl_service import CrawlService
 from auditor.shared.logging import auditor_logger
 
-DATABASE_URL = "sqlite+aiosqlite:///./audit_results.db"
+DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 
 async def main():
+    # 1. CLI Argument Handling
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("""
+Accessibility Auditor Domain Discovery CLI [v0.1.0]
+Usage: python site_audit.py <url>
+
+Options:
+  --help, -h    Show this help message
+        """)
+        return
+
     if len(sys.argv) < 2:
-        auditor_logger.error("Usage: python -m auditor.crawl_cli <url>")
+        auditor_logger.error("Usage: python site_audit.py <url>")
         return
 
     url = sys.argv[1]
@@ -24,24 +44,23 @@ async def main():
 
     # 1. Setup Infrastructure
     engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(SQLModel.metadata.create_all)
 
     # 2. DDD Component Lifecycle
-    async with async_session_factory() as db_session:
+    async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
         
         # Performance Service Layer
         audit_service = AuditService(None, repository)
         link_extractor = PlaywrightLinkExtractor()
-        crawler_service = CrawlerService(link_extractor)
+        crawler_service = LinkDiscoveryService(link_extractor)
         
-        crawl_orchestrator = SiteAuditManager(
-            crawler_service, 
-            audit_service,
-            max_concurrent_audits=5,
+        crawl_orchestrator = CrawlService(
+            audit_service=audit_service,
+            crawler_service=crawler_service,
+            max_depth=2,
             max_pages=20
         )
         

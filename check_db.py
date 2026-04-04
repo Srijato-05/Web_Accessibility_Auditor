@@ -1,19 +1,24 @@
+import sys
+import os
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from auditor.infrastructure.persistence_models import SessionModel, ViolationModel
-from auditor.infrastructure.sqlalchemy_repository import SqlAlchemyAuditRepository
-from sqlalchemy import select
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
-DATABASE_URL = "sqlite+aiosqlite:///./audit_results.db"
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
+from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
+
+DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 
 async def check():
     engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     
-    async with async_session() as session:
-        result = await session.execute(select(SessionModel).order_by(SessionModel.created_at.desc()))
-        last_session = result.scalars().first()
+    async with AsyncSession(engine) as session:
+        # Definitively use .exec() for SQLModel to avoid DeprecationWarnings
+        result = await session.exec(select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()))
+        last_session = result.first()
         if last_session:
             print(f"Status: {last_session.status}")
             print(f"Error: {last_session.error_message}")

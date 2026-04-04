@@ -435,7 +435,7 @@ class PlaywrightEngine(IBrowserEngine):
         if not page: return
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = f"auditor_evidence_{name}_{timestamp}.png"
+            path = f"reports/evidence/auditor_evidence_{name}_{timestamp}.png"
             await page.screenshot(path=path, full_page=True)
             self.logger.info(f"Clinical Evidence Secured: {path}")
         except Exception as e:
