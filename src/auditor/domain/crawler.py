@@ -31,8 +31,8 @@ class LinkDiscoveryService:
         parsed = urlparse(absolute_url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
-    async def discover_links(self, url: str) -> List[str]:
-        """Perform discovery on a single URL."""
+    async def extract_links(self, url: str) -> List[str]:
+        """Perform discovery and extraction on a single URL."""
         raw_links = await self.link_extractor.extract_links(url)
         unique_internal = []
         

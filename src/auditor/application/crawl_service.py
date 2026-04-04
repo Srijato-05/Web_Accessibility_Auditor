@@ -48,16 +48,13 @@ class CrawlService:
         self.crawler_service = crawler_service
         self.max_depth = max_depth
         self.max_pages = max_pages
-        self.visited_urls: Set[str] = set()
-        self.discovered_count = 0
-        self.success_count = 0
-        self.failed_count = 0
+        self.concurrency = concurrency
         self._semaphore = asyncio.Semaphore(concurrency)
-        self.logger = auditor_logger
+        
         self.visited_urls: Set[str] = set()
         self.discovered_count = 0
-        self.failed_count = 0
         self.success_count = 0
+        self.failed_count = 0
         self.filtered_count = 0
         
         self.logger = auditor_logger.getChild("CrawlController")

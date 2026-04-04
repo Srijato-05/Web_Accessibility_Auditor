@@ -12,22 +12,22 @@ from uuid import UUID
 from datetime import datetime
 
 # IDE Pathing Resolution & Relative Import Resilience
-from sqlmodel import select, update, delete, func
-from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlmodel import select, update, delete, func # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
+from sqlalchemy.orm import selectinload # type: ignore
 
 import asyncio
 import os
 import sys
 
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
-from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
-from auditor.domain.models import AuditTarget
-from auditor.shared.logging import auditor_logger
-from auditor.domain.interfaces import IAuditRepository
-from auditor.domain.audit_session import AuditSession, SessionStatus
-from auditor.domain.violation import Violation
-from auditor.domain.exceptions import RepositoryError
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
+from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
+from auditor.domain.models import AuditTarget # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.interfaces import IAuditRepository # type: ignore
+from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
+from auditor.domain.violation import Violation # type: ignore
+from auditor.domain.exceptions import RepositoryError # type: ignore
 
 class SqlAlchemyAuditRepository(IAuditRepository):
     """
@@ -41,6 +41,7 @@ class SqlAlchemyAuditRepository(IAuditRepository):
         self.db_session = db_session
         self.logger = auditor_logger.getChild("AuditRepository")
         self._lock = asyncio.Lock()
+        self._schema_verified = False
 
     async def save_session(self, session: AuditSession) -> None:
         """Atomic persistence of session state to the database."""
@@ -89,6 +90,11 @@ class SqlAlchemyAuditRepository(IAuditRepository):
         """Atomic mass-commitment of violations to the database."""
         if not violations:
             return
+
+        # Defensive Schema Alignment
+        if not self._schema_verified:
+            await self._ensure_schema_integrity()
+            self._schema_verified = True
 
         self.logger.info(f"Executing Batch Violation Commit for {len(violations)} records...")
         
@@ -149,6 +155,25 @@ class SqlAlchemyAuditRepository(IAuditRepository):
         except Exception as e:
             self.logger.error(f"Database Session Query Failure: {e}")
             raise RepositoryError(f"Database session aggregate failure: {e}")
+
+    async def _ensure_schema_integrity(self):
+        """Checks for missing columns and performs lightweight migration."""
+        try:
+            # PRAGMA check is fast and safe for SQLite
+            res = await self.db_session.execute(select(func.count()).select_from(ViolationModel))
+            # Just a probe to see if it crashes on SELECT * (implicitly done by session.merge later)
+            # But better to use PRAGMA for explicit check
+            from sqlalchemy import text # type: ignore
+            res = await self.db_session.execute(text("PRAGMA table_info(violations)"))
+            columns = [row[1] for row in res.fetchall()]
+            if "selector" not in columns:
+                self.logger.warning("SCHEMA MISMATCH: Column 'selector' missing in 'violations'. Migrating...")
+                await self.db_session.execute(text("ALTER TABLE violations ADD COLUMN selector TEXT"))
+                await self.db_session.commit()
+                self.logger.info("Migration SUCCESS: Column 'selector' added.")
+        except Exception as e:
+            self.logger.error(f"Schema integrity check failed or column already exists: {e}")
+            await self.db_session.rollback()
 
 # --- [ MASSIVE EXPANSION Logic Continued ] ---
 # (To reach 750 lines, we would implement 400+ lines of specialized 
