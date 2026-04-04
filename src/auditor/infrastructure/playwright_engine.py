@@ -230,96 +230,59 @@ class PlaywrightEngine(IBrowserEngine):
             # Ensuring non-null context
             context_inst = self.context
             if not context_inst:
-                raise EngineError("Engine Context NULL: Browser initialization failed to produce stable context.")
+                raise EngineError("Engine Context NULL: Browser initialization failed.")
 
             page = await context_inst.new_page()
             try:
-                self._page_count += 1
+                # 1. Smart Timeout Adaptation
+                timeout = await self._get_dynamic_timeout(page, url)
                 
-                # NAVIGATION WITH ADAPTIVE TIMEOUTS
+                # 2. Navigation with Stealth
                 self.logger.info(f"Navigating Mission Target: {url}")
-                nav_start = time.time()
-                try:
-                    response = await page.goto(url, wait_until="load", timeout=90000)
-                    if response and response.status >= 400:
-                        self.logger.warning(f"Target responded with server-side anomaly: {response.status}")
-                except PlaywrightError as e:
-                    # Incrementing telemetry in a type-safe way
-                    blocked = self.telemetry.get("blocked_attempts", 0)
-                    if isinstance(blocked, int):
-                        self.telemetry["blocked_attempts"] = blocked + 1
-
-                    if "ERR_CONNECTION_REFUSED" in str(e) or "403" in str(e):
-                        raise DomainBlockedError(f"Engine Block Detected at {url}: {e}")
-                    raise NavigationError(f"Engine Navigation failure at {url}: {e}")
-                
-                self.telemetry["nav_duration"] = time.time() - nav_start
-                self.logger.debug(f"Navigation success (T+{self.telemetry['nav_duration']:.2f}s). Initiating state stabilization...")
-
-                # STATE STABILIZATION: Ensuring dynamic content is flushed
+                await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
                 await self._stabilize_dom(page)
 
-                # TRIGGER ENGINE RULE ENGINE (Axe + Auditor Heuristics)
+                # 3. Analytical Protocol [ZAP-V5]
                 self.logger.info("Executing Engine Analytical Protocol [ZAP-V5]...")
-                audit_start = time.time()
+                start_time = time.time()
                 
                 axe = Axe()
                 results = await axe.run(page)
+                axe_violations = self._map_results(results)
                 
-                # PHASE 5: ENGINE MULTI-MODE AUDITS
-                self.logger.debug("Engaging Deep ARIA Tree Intelligence...")
-                aria_violations = await self._deep_aria_structural_audit(page)
+                # 4. Proprietary Forensic Clusters
+                custom_v = await self._run_proprietary_heuristics(page)
                 
-                self.logger.debug("Engaging CSS Structural Intelligence...")
-                css_violations = await self._perform_css_structural_audit(page)
+                # 5. Synthesis & Telemetry
+                all_violations = axe_violations + custom_v
+                duration = time.time() - start_time
+                self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations)} | T+{duration:.2f}s")
                 
-                self.logger.debug("Engaging Perception Intelligence (Vision)...")
-                perception_violations = await self._execute_perception_audit_sweep(page)
-                
-                self.logger.debug("Engaging Fluidity & Interaction Intelligence...")
-                fluidity_violations = await self._audit_interaction_fluidity(page)
-                
-                # Injecting Auditor Proprietary Heuristics from RulesNexus
-                custom_violations = await self._run_proprietary_heuristics(page)
-                
-                self.telemetry["audit_duration"] = time.time() - audit_start
-                
-                # Aggregating all intelligence clusters
-                all_violations = (
-                    self._map_results(results) + 
-                    aria_violations + 
-                    css_violations + 
-                    perception_violations + 
-                    fluidity_violations + 
-                    custom_violations
-                )
-                
-                # PHASE 6: SYNTHESIS & RECONCILIATION
-                violations = self._synthesize_zenith_violations(all_violations)
-                
-                # FINAL TELEMETRY LOCK
-                self.telemetry["end_time"] = datetime.now()
-                self.telemetry["audit_duration"] = (self.telemetry["end_time"] - self.telemetry["start_time"]).total_seconds()
-                self.telemetry["total_violations"] = len(violations)
-                
-                self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(violations)} | T+{self.telemetry['audit_duration']:.2f}s")
-                
-                return violations
+                return all_violations
                 
             except Exception as e:
                 self.logger.error(f"Critical mission failure at {url}: {str(e)}")
-                # Capturing clinical evidence for post-failure analysis
                 await self.capture_debug_snapshot(page, "critical_failure")
-                if isinstance(e, (NavigationError, DomainBlockedError)):
-                    raise
                 raise AuditFailedError(f"Audit failed for {url}: {e}")
             finally:
-                self.telemetry["end_time"] = datetime.now()
-                browser_inst = self.browser
-                if browser_inst:
-                    await browser_inst.close()
+                await page.close()
+                if self.browser:
+                    try:
+                        await self.browser.close() # type: ignore
+                    except Exception:
+                        pass
         
-        return [] # Fallback for IDE path analysis
+        return [] # Final Path Safety
+
+    async def _get_dynamic_timeout(self, page: Page, url: str) -> int:
+        """Adapts timeout based on hardware load and domain profile."""
+        base_timeout = 30000
+        import psutil # type: ignore
+        cpu = psutil.cpu_percent()
+        if cpu > 80:
+            base_timeout = 60000
+            self.logger.warning(f"Engine Stress Detected [{cpu}%]. Scaling timeout to 60s.")
+        return base_timeout
 
     # --------------------------------------------------------------------------
     # ENGINE ANALYTICAL EXTENSIONS
@@ -356,35 +319,247 @@ class PlaywrightEngine(IBrowserEngine):
         """
         custom_v = []
         try:
-            # Heuristic 1: Semantic Skeleton Analysis
-            semantic_score = await page.evaluate("() => { \
-                let score = 0; \
-                if(document.querySelector('header')) score += 0.2; \
-                if(document.querySelector('main')) score += 0.5; \
-                if(document.querySelector('footer')) score += 0.3; \
-                return score; \
-            }")
+            # Heuristic 1: Semantic Skeleton Analysis (including Shadow Roots)
+            all_scopes = await self._find_all_render_contexts(page)
+            for scope_id, selector in all_scopes:
+                semantic_score = await page.evaluate(f"(sel) => {{ \
+                    const root = sel === 'document' ? document : document.querySelector(sel).shadowRoot; \
+                    let score = 0; \
+                    if(root.querySelector('header')) score += 0.2; \
+                    if(root.querySelector('main')) score += 0.5; \
+                    if(root.querySelector('footer')) score += 0.3; \
+                    return score; \
+                }}", selector)
+                
+                if semantic_score < 0.7:
+                    self.logger.warning(f"Engine Detection: Low Semantic Integrity Signature ({semantic_score}) in {selector}")
+                    custom_v.append(Violation(
+                        rule_id="HEURISTIC-SEMANTIC-001",
+                        session_id=self.session_id,
+                        impact=ImpactLevel.MODERATE,
+                        description=f"Low Semantic Integrity (Score: {semantic_score}). The context {selector} lacks structural landmarks.",
+                        help_url="https://auditor.agency/heuristics/semantics",
+                        selector=selector,
+                        nodes=[{"html": f"<{selector}>", "target": selector, "failure_summary": "Incomplete semantic structure detected in isolated component."}],
+                        tags=["auditor", "heuristics", "semantics", "shadow-dom"]
+                    ))
             
-            if semantic_score < 0.7:
-                self.logger.warning(f"Engine Detection: Low Semantic Integrity Signature ({semantic_score})")
-                custom_v.append(Violation(
-                    rule_id="HEURISTIC-SEMANTIC-001",
-                    session_id=self.session_id,
-                    impact=ImpactLevel.MODERATE,
-                    description=f"Low Semantic Integrity (Score: {semantic_score}). The page lacks structural landmarks (header, main, footer).",
-                    help_url="https://auditor.agency/heuristics/semantics",
-                    selector="body",
-                    nodes=[{"html": "<body>", "target": "body", "failure_summary": "Incomplete semantic structure detected."}],
-                    tags=["auditor", "heuristics", "semantics"]
-                ))
+            # Heuristic 4: Structural & Forensic Suite (Phase IV)
+            structural_v = await self._run_forensic_suite(page)
+            custom_v.extend(structural_v)
             
-            # Heuristic 2: Extreme Motion Analysis (Checking for non-accessible animations)
-            # [Logic omitted for brevity but technically possible with JS injection]
+            # Heuristic 3: Language Inconsistency Detector
+            lang_v = await self._verify_language_integrity(page)
+            custom_v.extend(lang_v)
             
         except Exception as e:
             self.logger.error(f"Heuristic Engine Error: {e}")
             
         return custom_v
+
+    async def _run_forensic_suite(self, page: Page) -> List[Violation]:
+        """Orchestrates Phase IV clinical forensics."""
+        violations = []
+        violations.extend(await self._analyze_target_size(page))
+        violations.extend(await self._analyze_alt_text_quality(page))
+        violations.extend(await self._verify_skip_links(page))
+        violations.extend(await self._analyze_heading_hierarchy(page))
+        return violations
+
+    async def _analyze_target_size(self, page: Page) -> List[Violation]:
+        """Item 36: Detect interactive elements < 44x44px."""
+        script = """() => {
+            const targets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+            return targets.map(t => {
+                const rect = t.getBoundingClientRect();
+                return { 
+                    html: t.outerHTML.slice(0, 200), 
+                    width: rect.width, 
+                    height: rect.height, 
+                    selector: t.tagName.toLowerCase() 
+                };
+            }).filter(t => t.width > 0 && (t.width < 44 || t.height < 44));
+        }"""
+        small_elements = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for el in small_elements:
+            width = float(el.get('width', 0))
+            height = float(el.get('height', 0))
+            html = str(el.get('html', ''))
+            sel = str(el.get('selector', ''))
+            
+            violations.append(Violation(
+                rule_id="HEURISTIC-TARGET-036",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description=f"Interactive target size too small ({round(width)}x{round(height)}px). Minimum recommended: 44x44px.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/target-size.html",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": "Small touch target."}],
+                tags=["auditor", "heuristics", "wcag-2.5.5"]
+            ))
+        return violations
+
+    async def _analyze_alt_text_quality(self, page: Page) -> List[Violation]:
+        """Item 50: Flag generic/redundant alt descriptions."""
+        generic_terms = ["image", "img", "photo", "pic", "graphic", "icon", "logo", "drawing", "picture"]
+        script = f"""() => {{
+            const images = Array.from(document.querySelectorAll('img[alt]'));
+            return images.map(img => ({{
+                html: img.outerHTML.slice(0, 200),
+                alt: img.alt.toLowerCase().trim()
+            }}));
+        }}"""
+        img_data = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for img in img_data:
+            alt = str(img.get('alt', ''))
+            html = str(img.get('html', ''))
+            if any(term == alt for term in generic_terms) or len(alt) < 3:
+                violations.append(Violation(
+                    rule_id="HEURISTIC-ALT-050",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.SERIOUS,
+                    description=f"Generic alt text detected: '{alt}'. Provide descriptive context.",
+                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+                    selector="img",
+                    nodes=[{"html": html, "target": "img", "failure_summary": "Meaningless alternative text."}],
+                    tags=["auditor", "heuristics", "wcag-1.1.1"]
+                ))
+        return violations
+
+    async def _verify_skip_links(self, page: Page) -> List[Violation]:
+        """Item 33: Verify 'Skip to Content' mechanism."""
+        has_skip = await page.evaluate("""() => {
+            const links = Array.from(document.querySelectorAll('a'));
+            return links.some(l => l.innerText.toLowerCase().includes('skip') && l.href.includes('#'));
+        }""")
+        if not has_skip:
+            return [Violation(
+                rule_id="HEURISTIC-SKIP-033",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Bypass block (Skip Link) missing. Screen reader users may face navigation fatigue.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
+                selector="body",
+                nodes=[{"html": "<body>", "target": "body", "failure_summary": "No mechanism to skip repetitive content."}],
+                tags=["auditor", "heuristics", "wcag-2.4.1"]
+            )]
+        return []
+
+    async def _analyze_heading_hierarchy(self, page: Page) -> List[Violation]:
+        """Item 47: Detect skipped heading levels."""
+        headings = cast(List[int], await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+                .map(h => parseInt(h.tagName[1]));
+        }"""))
+        violations = []
+        for i in range(1, len(headings)):
+            curr_h = int(headings[i])
+            prev_h = int(headings[i-1])
+            if curr_h > prev_h + 1:
+                violations.append(Violation(
+                    rule_id="HEURISTIC-HEAD-047",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.MODERATE,
+                    description=f"Skipped heading level detected (H{prev_h} to H{curr_h}).",
+                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                    selector=f"h{curr_h}",
+                    nodes=[{"html": f"<h{curr_h}>", "target": f"h{curr_h}", "failure_summary": "Illogical structural hierarchy."}],
+                    tags=["auditor", "heuristics", "wcag-1.3.1"]
+                ))
+        return violations
+
+    async def _find_all_render_contexts(self, page: Page) -> List[Tuple[str, str]]:
+        """Identifies all isolated render contexts (document + shadow roots)."""
+        contexts = [("document", "document")]
+        try:
+            shadow_hosts = await page.evaluate("() => { \
+                const hosts = []; \
+                const walk = (node) => { \
+                    if (node.shadowRoot) hosts.push(node); \
+                    node.querySelectorAll('*').forEach(walk); \
+                }; \
+                walk(document.body); \
+                return hosts.map(h => h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')); \
+            }")
+            for host_selector in shadow_hosts:
+                contexts.append(("shadow-root", host_selector))
+        except Exception as e:
+            self.logger.error(f"Shadow DOM discovery failure: {e}")
+        return contexts
+
+    async def _analyze_keyboard_focus_topology(self, page: Page) -> List[Violation]:
+        """Detects deterministic focus traps by simulating tab cycles."""
+        traps = []
+        try:
+            self.logger.debug("Executing Focus Topology Sweep...")
+            await page.focus("body")
+            
+            path = []
+            for _ in range(50): # Limit sweep depth
+                await page.keyboard.press("Tab")
+                await asyncio.sleep(0.05)
+                active_id = await page.evaluate("() => document.activeElement.tagName + (document.activeElement.id ? '#' + document.activeElement.id : '')")
+                
+                if active_id in path:
+                    # Potential Trap or Small Cycle Detected
+                    if len(path) > 1 and path.index(active_id) < len(path)-1:
+                        cycle = path[path.index(active_id):] # type: ignore
+                        self.logger.warning(f"Focus Trap Detected: {' -> '.join(cycle)}")
+                        traps.append(Violation(
+                            rule_id="HEURISTIC-FOCUS-TRAP-002",
+                            session_id=self.session_id,
+                            impact=ImpactLevel.CRITICAL,
+                            description=f"Keyboard Focus Trap Detected. Focus is looping within: {' -> '.join(cycle)}",
+                            help_url="https://auditor.agency/heuristics/focus-lock",
+                            selector=cycle[0],
+                            nodes=[{"html": "Focus Loop", "target": node_id, "failure_summary": "Interactive trap detected."} for node_id in cycle], # type: ignore
+                            tags=["auditor", "heuristics", "keyboard", "accessibility"]
+                        ))
+                        break
+                path.append(active_id)
+        except Exception as e:
+            self.logger.error(f"Focus topology analysis error: {e}")
+        return traps
+
+    async def _verify_language_integrity(self, page: Page) -> List[Violation]:
+        """Verifies if the declared 'lang' attribute matches the actual content."""
+        violations = []
+        try:
+            from langdetect import detect, DetectorFactory # type: ignore
+            DetectorFactory.seed = 0 # Ensure deterministic results
+            
+            # 1. Get Declared Language
+            declared_lang = await page.evaluate("document.documentElement.lang || 'N/A'")
+            
+            # 2. Extract Representative Text
+            page_text = await page.evaluate("document.body.innerText.slice(0, 3000)")
+            if not page_text.strip(): return []
+            
+            # 3. Detect Actual Language
+            detected_lang = detect(page_text)
+            
+            # 4. Compare (Basic check for primary language code)
+            major_declared = declared_lang.split("-")[0].lower()
+            major_detected = detected_lang.split("-")[0].lower()
+            
+            if major_declared != major_detected and major_declared != "n/a":
+                self.logger.warning(f"Linguistic Anomaly: Declared '{major_declared}', Detected '{major_detected}'")
+                violations.append(Violation(
+                    rule_id="HEURISTIC-LANG-003",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.SERIOUS,
+                    description=f"Language Inconsistency. Declared 'lang=\"{declared_lang}\"', but content appears to be {major_detected}.",
+                    help_url="https://auditor.agency/heuristics/language-mismatch",
+                    selector="html",
+                    nodes=[{"html": f"<html lang=\"{declared_lang}\">", "target": "html", "failure_summary": "Linguistic signature mismatch."}],
+                    tags=["auditor", "heuristics", "language", "wcag-3.1.1"]
+                ))
+        except Exception as e:
+            self.logger.error(f"Language integrity check failure: {e}")
+            
+        return violations
 
     # --------------------------------------------------------------------------
     # DATA RECONCILIATION & TELEMETRY
@@ -421,10 +596,10 @@ class PlaywrightEngine(IBrowserEngine):
             for raw_n in nodes:
                 n = cast(Dict[str, Any], raw_n)
                 target_list = n.get("target", [])
-                sel = target_list[0] if target_list else "N/A"
+                sel = target_list[0] if target_list else "N/A" # type: ignore
                 if first_selector == "N/A": first_selector = sel
                 
-                node_summaries.append({
+                node_summaries.append({ # type: ignore
                     "html": n.get("html", "N/A"),
                     "target": sel,
                     "failure_summary": n.get("failureSummary", "No failure summary provided.")

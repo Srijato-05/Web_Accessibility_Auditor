@@ -12,6 +12,7 @@ import logging
 import json
 import os
 import sys
+import psutil # type: ignore
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any, Tuple, cast
 
@@ -20,21 +21,22 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
-from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
-from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
-from auditor.infrastructure.playwright_engine import PlaywrightEngine
-from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
-from auditor.domain.crawler import LinkDiscoveryService
-from auditor.application.audit_service import AuditService
-from auditor.application.crawl_service import CrawlService
-from auditor.domain.target_repository import ITargetRepository
-from auditor.domain.models import AuditTarget, DomainStatus
-from auditor.shared.logging import auditor_logger
-from auditor.domain.exceptions import BatchError, RepositoryError
-from auditor.infrastructure.persistence_models import TargetModel
-from auditor.domain.rules_nexus import RulesNexus
+from sqlmodel import select # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
+from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
+from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
+from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
+from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor # type: ignore
+from auditor.domain.crawler import LinkDiscoveryService # type: ignore
+from auditor.application.audit_service import AuditService # type: ignore
+from auditor.application.crawl_service import CrawlService # type: ignore
+from auditor.domain.target_repository import ITargetRepository # type: ignore
+from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.exceptions import BatchError, RepositoryError # type: ignore
+from auditor.infrastructure.persistence_models import TargetModel # type: ignore
+from auditor.domain.rules_nexus import RulesNexus # type: ignore
+from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
 
 class BatchAuditManager:
     """
@@ -60,6 +62,7 @@ class BatchAuditManager:
             "last_sweep_duration_seconds": 0.0,
             "average_processing_time": 0.0
         }
+        self.queue = RedisTaskQueue()
 
     async def run_batch_audit(self) -> Dict[str, Any]:
         """Main entry point for starting a concurrent batch process."""
@@ -74,7 +77,18 @@ class BatchAuditManager:
                 self.logger.warning("Abort: No active targets available in the repository.")
                 return {"status": "skipped", "message": "Queue empty"}
             
-            self.logger.info(f"Target Queue Identified: {len(domains)} domains scheduled for audit.")
+            # Hardware-Aware Dynamic Throttling
+            cpu_usage = psutil.cpu_percent(interval=None)
+            ram_usage = psutil.virtual_memory().percent
+            throttle_factor = 1.0
+            if cpu_usage > 75 or ram_usage > 80:
+                throttle_factor = 0.5
+                self.logger.warning(f"Hardware Load Elevated [CPU: {cpu_usage}%, RAM: {ram_usage}%]. Throttling concurrency.")
+            
+            max_parallel = max(1, int(self.max_concurrent_domains * throttle_factor))
+            self._semaphore = asyncio.Semaphore(max_parallel)
+            
+            self.logger.info(f"Target Queue Identified: {len(domains)} domains. Concurrency: {max_parallel}")
             
             tasks = [self._process_domain_audit(domain) for domain in cast(List[AuditTarget], domains)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -91,6 +105,35 @@ class BatchAuditManager:
             import traceback
             self.logger.critical(f"ORCHESTRATOR FAILURE: {e}\n{traceback.format_exc()}")
             raise BatchError(f"Autonomous orchestrator failure: {e}")
+
+    async def dispatch_batch_audit(self) -> Dict[str, Any]:
+        """Dispatches active domains to the Redis task queue for distributed processing."""
+        self.logger.info("Initializing Distributed Batch Dispatch...")
+        
+        try:
+            await self.queue.connect()
+            async with AsyncSession(self.engine) as session:
+                target_repo = SqlAlchemyTargetRepository(session)
+                domains = await target_repo.get_active_domains()
+            
+            if not domains:
+                self.logger.warning("Dispatch Abort: No active targets available.")
+                return {"status": "skipped", "message": "Queue empty"}
+            
+            pushed_count = 0
+            for domain in domains:
+                await self.queue.push_task("full_site_audit", {"url": domain.url})
+                pushed_count += 1
+                
+            self.logger.info(f"Successfully dispatched {pushed_count} tasks to the cluster.")
+            return {"status": "dispatched", "count": pushed_count}
+            
+        except Exception as e:
+            self.logger.critical(f"DISPATCH FAILURE: {e}")
+            raise BatchError(f"Distributed dispatch failure: {e}")
+        finally:
+            await self.queue.disconnect()
+        return {}
 
     async def _process_domain_audit(self, domain: AuditTarget) -> bool:
         """Coordinates the end-to-end audit process for a specific domain."""
