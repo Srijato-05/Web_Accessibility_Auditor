@@ -63,6 +63,14 @@ class BatchAuditManager:
             "average_processing_time": 0.0
         }
         self.queue = RedisTaskQueue()
+        
+        # Phase VII: Dynamic Auto-Scaling
+        self._dynamic_throttle_ratio: float = 1.0
+        self._stop_monitor = asyncio.Event()
+        
+        # Phase VII: Dynamic Auto-Scaling
+        self._dynamic_throttle_ratio: float = 1.0
+        self._stop_monitor = asyncio.Event()
 
     async def run_batch_audit(self) -> Dict[str, Any]:
         """Main entry point for starting a concurrent batch process."""
@@ -77,18 +85,10 @@ class BatchAuditManager:
                 self.logger.warning("Abort: No active targets available in the repository.")
                 return {"status": "skipped", "message": "Queue empty"}
             
-            # Hardware-Aware Dynamic Throttling
-            cpu_usage = psutil.cpu_percent(interval=None)
-            ram_usage = psutil.virtual_memory().percent
-            throttle_factor = 1.0
-            if cpu_usage > 75 or ram_usage > 80:
-                throttle_factor = 0.5
-                self.logger.warning(f"Hardware Load Elevated [CPU: {cpu_usage}%, RAM: {ram_usage}%]. Throttling concurrency.")
+            # Hardware-Aware Dynamic Auto-Scaling (Phase VII)
+            monitor_task = asyncio.create_task(self._monitor_system_health())
             
-            max_parallel = max(1, int(self.max_concurrent_domains * throttle_factor))
-            self._semaphore = asyncio.Semaphore(max_parallel)
-            
-            self.logger.info(f"Target Queue Identified: {len(domains)} domains. Concurrency: {max_parallel}")
+            self.logger.info(f"Target Queue Identified: {len(domains)} domains. Concurrency Baseline: {self.max_concurrent_domains}")
             
             tasks = [self._process_domain_audit(domain) for domain in cast(List[AuditTarget], domains)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -99,6 +99,11 @@ class BatchAuditManager:
                 "failure": len([r for r in results if r is not True])
             }
             self.logger.info(f"Batch Process Complete: {summary}")
+            
+            # Cleanup Monitor
+            self._stop_monitor.set()
+            await monitor_task
+            
             return summary
             
         except Exception as e:
@@ -135,8 +140,51 @@ class BatchAuditManager:
             await self.queue.disconnect()
         return {}
 
+    async def _monitor_system_health(self):
+        """Background loop for sub-second hardware telemetry and auto-scaling."""
+        self.logger.info("Hardware Auto-Scaler ONLINE.")
+        while not self._stop_monitor.is_set():
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory().percent
+            
+            # Exponential backoff logic for throttle ratio
+            if cpu > 85 or ram > 90:
+                self._dynamic_throttle_ratio = 0.2
+                self.logger.warning(f"SYSTEM CRITICAL LOAD [{cpu}% CPU]. Throttling to 20% capacity.")
+            elif cpu > 70 or ram > 80:
+                self._dynamic_throttle_ratio = 0.5
+                self.logger.info(f"System Load Elevated [{cpu}% CPU]. Throttling to 50% capacity.")
+            else:
+                self._dynamic_throttle_ratio = 1.0
+                
+            await asyncio.sleep(2)
+
+    async def _monitor_system_health(self):
+        """Background loop for sub-second hardware telemetry and auto-scaling."""
+        self.logger.info("Hardware Auto-Scaler ONLINE.")
+        while not self._stop_monitor.is_set():
+            cpu = psutil.cpu_percent(interval=1)
+            ram = psutil.virtual_memory().percent
+            
+            # Exponential backoff logic for throttle ratio
+            if cpu > 85 or ram > 90:
+                self._dynamic_throttle_ratio = 0.2
+                self.logger.warning(f"SYSTEM CRITICAL LOAD [{cpu}% CPU]. Throttling to 20% capacity.")
+            elif cpu > 70 or ram > 80:
+                self._dynamic_throttle_ratio = 0.5
+                self.logger.info(f"System Load Elevated [{cpu}% CPU]. Throttling to 50% capacity.")
+            else:
+                self._dynamic_throttle_ratio = 1.0
+                
+            await asyncio.sleep(2)
+
     async def _process_domain_audit(self, domain: AuditTarget) -> bool:
-        """Coordinates the end-to-end audit process for a specific domain."""
+        """Coordinates the end-to-end audit process with dynamic throttling."""
+        # Wait for hardware clearance if system is pinned
+        while self._dynamic_throttle_ratio < 0.3:
+            self.logger.debug(f"Audit PENDING: Waiting for hardware clearance for {domain.url}...")
+            await asyncio.sleep(5)
+
         async with self._semaphore:
             self.logger.info(f"Target Audit Execution START: {domain.url}")
             

@@ -57,7 +57,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     updated_at=session.updated_at,
                     started_at=session.started_at,
                     completed_at=session.completed_at,
-                    error_message=session.error_message
+                    error_message=session.error_message,
+                    focus_path=session.focus_path,
+                    aria_events=session.aria_events
                 )
                 await self.db_session.merge(model)
                 await self.db_session.commit()
@@ -136,7 +138,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     updated_at=m.updated_at,
                     started_at=m.started_at,
                     completed_at=m.completed_at,
-                    error_message=m.error_message
+                    error_message=m.error_message,
+                    focus_path=m.focus_path,
+                    aria_events=m.aria_events
                 )
                 session.violations = [
                     Violation(

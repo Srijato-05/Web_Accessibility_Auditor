@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING, Any, Dict
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
@@ -27,6 +27,10 @@ class AuditSession:
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     violations: List[Violation] = field(default_factory=list)
+    
+    # Phase VII: Forensic Metadata
+    focus_path: List[Dict[str, Any]] = field(default_factory=list)
+    aria_events: List[Dict[str, Any]] = field(default_factory=list)
 
     def start(self):
         if self.status != SessionStatus.CREATED:

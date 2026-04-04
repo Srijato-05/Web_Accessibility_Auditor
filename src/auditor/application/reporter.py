@@ -65,6 +65,8 @@ class AuditReporter:
             "start_time": session_record.started_at.isoformat() if session_record.started_at else None,
             "end_time": session_record.completed_at.isoformat() if session_record.completed_at else None,
             "total_violations": len(violations),
+            "focus_path": session_record.focus_path if hasattr(session_record, 'focus_path') else [],
+            "aria_events": session_record.aria_events if hasattr(session_record, 'aria_events') else [],
             "violations": [
                 {
                     "rule_id": v.id,
@@ -104,17 +106,34 @@ class AuditReporter:
                 impact_counts[impact] += 1
 
         # 4. Heading Hierarchy Mapping
-        headings_list = []
-        for v in data["violations"]:
-            if v["rule_id"] == "HEURISTIC-HEAD-047":
-                h_card = f"""
-                <div class="hierarchy-item level-error">
-                    <span class="warning-icon">⚠</span> 
-                    <strong>{v['selector'].upper()}</strong>: {v['description']}
-                </div>
-                """
-                headings_list.append(h_card)
-        headings_html = "".join(headings_list)
+        headings_html = "".join([f"""
+            <div class="hierarchy-item level-error">
+                <span class="warning-icon">⚠</span> 
+                <strong>{v['selector'].upper()}</strong>: {v['description']}
+            </div>
+            """ for v in data["violations"] if v["rule_id"] == "HEURISTIC-HEAD-047"])
+
+        # 5. Focus Path SVG Reconstruction (Phase VII)
+        focus_svg = ""
+        if data.get("focus_path"):
+            path_points = []
+            for i, p in enumerate(data["focus_path"]):
+                p_x, p_y = p.get('x', 0) / 2, p.get('y', 0) / 2 # Scaling for dashboard
+                path_points.append(f"{p_x},{p_y}")
+                focus_svg += f'<circle cx="{p_x}" cy="{p_y}" r="4" fill="var(--accent-primary)" />'
+                if i > 0:
+                    prev_x, prev_y = data["focus_path"][i-1].get('x', 0)/2, data["focus_path"][i-1].get('y', 0)/2
+                    focus_svg += f'<line x1="{prev_x}" y1="{prev_y}" x2="{p_x}" y2="{p_y}" stroke="var(--accent-primary)" stroke-width="1" opacity="0.4" />'
+            
+        # 6. ARIA-Live Event Log (Phase VII)
+        aria_html = "".join([f"""
+            <div class="aria-event">
+                <span class="timestamp">+{e.get('timestamp', 0) % 10000}ms</span>
+                <span class="type">{e.get('type')}</span>
+                <span class="content">"{e.get('content')}"</span>
+                <span class="target">@ {e.get('selector')}</span>
+            </div>
+            """ for e in data.get("aria_events", [])])
 
         violations_html = ""
         for v in data["violations"]:
@@ -251,12 +270,18 @@ class AuditReporter:
         .tags {{ display: flex; gap: 8px; }}
         .tags span {{ font-size: 0.7rem; color: var(--text-dim); }}
 
-        /* Structural Section */
-        .section-title {{ font-size: 1.5rem; font-weight: 700; margin: 40px 0 20px; color: var(--accent-primary); }}
-        .hierarchy-container {{ background: var(--card-bg); padding: 24px; border-radius: 16px; border: 1px solid var(--border-color); margin-bottom: 40px; }}
-        .hierarchy-item {{ padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; }}
-        .level-error {{ color: var(--impact-serious); background: rgba(249, 115, 22, 0.05); }}
         .warning-icon {{ margin-right: 8px; }}
+
+        /* Phase VII: Visual Diagnostics */
+        .visualization-container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 40px; }}
+        .forensic-box {{ background: var(--card-bg); padding: 24px; border-radius: 16px; border: 1px solid var(--border-color); }}
+        .svg-map {{ width: 100%; height: 300px; background: #000; border-radius: 8px; border: 1px solid #333; }}
+        .aria-log {{ height: 300px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; padding: 10px; }}
+        .aria-event {{ padding: 8px; border-bottom: 1px solid #222; display: flex; gap: 12px; align-items: center; }}
+        .aria-event .timestamp {{ color: var(--accent-primary); }}
+        .aria-event .type {{ color: #22c55e; font-weight: 700; }}
+        .aria-event .content {{ color: #ddd; font-style: italic; }}
+        .aria-event .target {{ color: var(--text-dim); font-size: 0.7rem; }}
     </style>
 </head>
 <body>
@@ -288,9 +313,24 @@ class AuditReporter:
             </div>
         </div>
 
-        <h2 class="section-title">Structural Hierarchy Anomaly Log</h2>
         <div class="hierarchy-container">
             {headings_html if headings_html else '<div class="hierarchy-item" style="color: var(--impact-minor)">No structural hierarchy anomalies detected.</div>'}
+        </div>
+
+        <div class="visualization-container">
+            <div class="forensic-box">
+                <h3 class="section-title" style="margin-top:0">Visual Focus Path</h3>
+                <svg class="svg-map" viewBox="0 0 1000 500">
+                    <rect width="100%" height="100%" fill="#050505" />
+                    {focus_svg}
+                </svg>
+            </div>
+            <div class="forensic-box">
+                <h3 class="section-title" style="margin-top:0">Dynamic ARIA-Live Log</h3>
+                <div class="aria-log">
+                    {aria_html if aria_html else '<div style="color:var(--text-dim)">No dynamic ARIA events recorded.</div>'}
+                </div>
+            </div>
         </div>
 
         <h2 class="section-title">Violations Inventory</h2>

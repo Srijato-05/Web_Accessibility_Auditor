@@ -10,10 +10,11 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
 
-from sqlmodel import SQLModel, Field, Relationship, Column, JSON, String, DateTime
+from sqlmodel import SQLModel, Field, Relationship # type: ignore
+from sqlalchemy import Column, JSON, String, DateTime # type: ignore
 
-from auditor.domain.audit_session import AuditSession, SessionStatus
-from auditor.domain.models import AuditTarget, DomainStatus
+from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
+from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
 
 class AuditSessionModel(SQLModel, table=True):
     __tablename__ = "audit_sessions"
@@ -26,6 +27,10 @@ class AuditSessionModel(SQLModel, table=True):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    
+    # Phase VII: Forensic Metadata
+    focus_path: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    aria_events: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     
     violations: List["ViolationModel"] = Relationship(back_populates="session")
 

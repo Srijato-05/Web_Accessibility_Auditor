@@ -21,13 +21,13 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from ..domain.audit_session import AuditSession, SessionStatus
-from ..domain.interfaces import IBrowserEngine, IAuditRepository
-from ..domain.exceptions import AuditFailedError, NavigationError, RepositoryError, BatchError
-from ..shared.logging import auditor_logger
-from ..infrastructure.playwright_engine import PlaywrightEngine
-from ..domain.rules_nexus import RulesNexus
-from ..domain.violation import Violation, ImpactLevel
+from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
+from auditor.domain.interfaces import IBrowserEngine, IAuditRepository # type: ignore
+from auditor.domain.exceptions import AuditFailedError, NavigationError, RepositoryError, BatchError # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
+from auditor.domain.rules_nexus import RulesNexus # type: ignore
+from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 
 class AuditService:
     """
@@ -82,6 +82,10 @@ class AuditService:
             self.logger.info("Starting analysis via browser engine...")
             violations = await engine.scan_url(url)
             
+            # PHASE VII: FORENSIC TELEMETRY EXTRACTION
+            session.focus_path = engine.focus_path
+            session.aria_events = engine.aria_events
+            
             # PHASE 3: ANALYSIS & AGGREGATION
             self.logger.info(f"Analysis Complete. Discovered {len(violations)} violations.")
             
@@ -92,6 +96,7 @@ class AuditService:
                 
                 # Update Session State
                 session.complete()
+                await self.repository.save_session(session)
                 self.metrics["total_processed"] += 1
                 self.metrics["total_violations_captured"] += len(violations)
                 
