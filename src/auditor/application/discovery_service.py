@@ -10,6 +10,7 @@ Responsibilities:
 """
 
 from typing import List, Set
+from itertools import islice
 from auditor.domain.target_repository import ITargetRepository # type: ignore
 from auditor.domain.models import AuditTarget # type: ignore
 from auditor.domain.sitemap_discovery import SitemapDiscoveryEngine # type: ignore
@@ -56,15 +57,15 @@ class DiscoveryService:
         # 3. Fallback: Recursive Link Crawling (Cycle 1)
         if not all_discovered:
             self.logger.warning(f"Sitemap discovery zeroed on {base_url}. BRIDGING GAP via RECURSIVE FALLBACK.")
-            fallback_urls = await self.crawler.extract_links(base_url)
+            fallback_urls: List[str] = await self.crawler.extract_links(base_url)
             self.logger.info(f"Recursive Mission Successful: Extracted {len(fallback_urls)} targets through anti-bot shielding.")
             if fallback_urls:
-                 self.logger.debug(f"Fallback Sample: {fallback_urls[:5]}")
+                 sample_targets = list(islice(fallback_urls, 5))
+                 self.logger.debug(f"Fallback Sample: {sample_targets}")
             all_discovered.update(fallback_urls)
             
         # 4. Filter and Dispatch
-        dispatch_count = 0
-        filtered_count = 0
+        metrics = {"dispatched": 0, "filtered": 0}
         for url in all_discovered:
             if self.robots_engine.is_allowed(url):
                 # Phase XIII: Persistent Discovery
@@ -75,14 +76,14 @@ class DiscoveryService:
                     self.logger.debug(f"Target already exists in ledger: {url}")
                 
                 await self.queue.push_task("single_url_audit", {"url": url})
-                dispatch_count += 1
+                metrics["dispatched"] += 1
             else:
-                filtered_count += 1
-                if filtered_count <= 5:
+                metrics["filtered"] += 1
+                if metrics["filtered"] <= 5:
                     self.logger.info(f"Discovery Filtered: {url} (Blocked by Robots compliance)")
 
-        if filtered_count > 0:
-            self.logger.warning(f"Compliance Filter active: Blocked {filtered_count} mission targets.")
+        if metrics["filtered"] > 0:
+            self.logger.warning(f"Compliance Filter active: Blocked {metrics['filtered']} mission targets.")
                 
-        self.logger.info(f"--- [ DISCOVERY MISSION COMPLETE: Dispatched {dispatch_count} tasks ] ---")
-        return {"dispatched": dispatch_count, "discovered": len(all_discovered)}
+        self.logger.info(f"--- [ DISCOVERY MISSION COMPLETE: Dispatched {metrics['dispatched']} tasks ] ---")
+        return {"dispatched": metrics["dispatched"], "discovered": len(all_discovered)}
