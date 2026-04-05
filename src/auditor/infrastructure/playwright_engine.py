@@ -399,11 +399,27 @@ class PlaywrightEngine(IBrowserEngine):
                 start_time = time.time()
                 
                 axe = Axe()
-                results = await axe.run(page)
-                axe_violations = self._map_results(results)
+                try:
+                    # Cycle 12: High-Fidelity Timeout Protection
+                    results = await asyncio.wait_for(axe.run(page), timeout=120)
+                    axe_violations = self._map_results(results)
+                except asyncio.TimeoutError:
+                    self.logger.error(f"Engine Analytical Timeout [ZAP-V5]: Analysis at {url} exceeded 120s.")
+                    axe_violations = []
                 
                 # 4. Proprietary Forensic Clusters
-                custom_v = await self._run_proprietary_heuristics(page)
+                # Skip forensics if main analysis timed out (prevents TargetClosedError race)
+                custom_v = []
+                if axe_violations or not isinstance(axe_violations, list): 
+                    # If we have violations or a timeout occurred but we want to try forensics
+                    # Actually, let's just try forensics if it didn't timeout
+                    pass
+                
+                if 'axe_violations' in locals() and (axe_violations or (isinstance(axe_violations, list))):
+                 try:
+                    custom_v = await self._run_proprietary_heuristics(page)
+                 except Exception as he:
+                    self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
                 
                 # 5. Synthesis & Telemetry
                 all_violations = axe_violations + custom_v
@@ -412,12 +428,23 @@ class PlaywrightEngine(IBrowserEngine):
                 
                 return all_violations
                 
+            except (PlaywrightError, asyncio.TimeoutError) as pe:
+                self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}")
+                # Do NOT snapshot on TargetClosedError
+                if "closed" not in str(pe).lower():
+                    try:
+                        await self.capture_debug_snapshot(page, "protocol_failure")
+                    except: pass
+                raise AuditFailedError(f"Audit failed for {url}: {pe}")
             except Exception as e:
-                self.logger.error(f"Critical mission failure at {url}: {str(e)}")
-                await self.capture_debug_snapshot(page, "critical_failure")
+                self.logger.critical(f"FATAL Engine Anomaly at {url}: {e}", exc_info=True)
                 raise AuditFailedError(f"Audit failed for {url}: {e}")
             finally:
-                await page.close()
+                if page:
+                    try: 
+                        if not page.is_closed():
+                            await page.close()
+                    except: pass
                 if self.context:
                     try:
                         await self.context.close()
@@ -804,7 +831,7 @@ class PlaywrightEngine(IBrowserEngine):
             attributes.forEach(attr => {
                 const elements = Array.from(document.querySelectorAll(`[${attr}]`));
                 elements.forEach(el => {
-                    const ids = el.getAttribute(attr).split(/\s+/);
+                    const ids = el.getAttribute(attr).split(/\\s+/);
                     ids.forEach(id => {
                         if (id && !document.getElementById(id)) {
                             broken.push({

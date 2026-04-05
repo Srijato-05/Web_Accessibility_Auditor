@@ -135,11 +135,13 @@ class AuditWorker:
             # 2. Assemble Service Layer
             audit_service = AuditService(browser, repo)
             
-            # 3. Execution
+            # 3. Execution with Surgical Watchdog (10-minute mission limit)
             try:
                 self.logger.info(f"--- [ STARTING SURGICAL AUDIT: {url} ] ---")
-                await audit_service.execute_audit(url)
+                await asyncio.wait_for(audit_service.execute_audit(url), timeout=600)
                 self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
+            except asyncio.TimeoutError:
+                self.logger.error(f"Surgical Watchdog Triggered: Audit for {url} exceeded 10-minute mission limit. Aborting.")
             except Exception as e:
                 self.logger.error(f"Surgical Audit Failure [{url}]: {e}")
             finally:

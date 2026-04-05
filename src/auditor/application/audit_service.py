@@ -114,7 +114,8 @@ class AuditService:
                 await asyncio.sleep(dynamic_delay)
             
             # PHASE 2: BROWSER ENGINE DEPLOYMENT
-            engine = PlaywrightEngine(session.id)
+            # Use injected engine if available, otherwise provision local mission engine
+            engine = self.engine if self.engine else PlaywrightEngine(session.id)
             
             self.logger.info("Starting analysis via browser engine...")
             violations = await engine.scan_url(url)
