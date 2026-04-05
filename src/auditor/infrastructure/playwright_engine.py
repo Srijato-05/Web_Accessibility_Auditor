@@ -97,6 +97,7 @@ class PlaywrightEngine(IBrowserEngine):
     def __init__(self, session_id: UUID, headless: bool = True):
         self.session_id = session_id
         self.headless = headless
+        self.playwright_mgr: Optional[Any] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self._page_count = 0
@@ -129,6 +130,33 @@ class PlaywrightEngine(IBrowserEngine):
     # --------------------------------------------------------------------------
     # CORE LIFECYCLE: THE BROWSER CLUSTER
     # --------------------------------------------------------------------------
+
+    async def start(self):
+        """Initializes the persistent playwright and browser instance."""
+        if not self.browser:
+            self.logger.info("Starting Persistent Engine Cluster...")
+            self.playwright_mgr = await async_playwright().start()
+            await self._init_browser(self.playwright_mgr)
+
+    async def teardown(self):
+        """Gracefully terminates the engine cluster and releases hardware handles."""
+        self.logger.info("Commencing Engine Teardown Protocol...")
+        ctx = self.context
+        if ctx:
+            try: await ctx.close()
+            except: pass
+        br = self.browser
+        if br:
+            try: await br.close()
+            except: pass
+        mgr = self.playwright_mgr
+        if mgr:
+            try: await mgr.stop()
+            except: pass
+        self.browser = None
+        self.context = None
+        self.playwright_mgr = None
+        self.logger.info("Engine Cluster OFFLINE.")
 
     async def _init_browser(self, playwright: Any):
         """
@@ -367,15 +395,27 @@ class PlaywrightEngine(IBrowserEngine):
         """
         self.telemetry["start_time"] = datetime.now()
         
-        async with async_playwright() as playwright:
-            await self._init_browser(playwright)
+        # Ensure engine is active
+        if not self.browser:
+            await self.start()
             
-            # Ensuring non-null context
-            context_inst = self.context
-            if not context_inst:
-                raise EngineError("Engine Context NULL: Browser initialization failed.")
-
-            page = await context_inst.new_page()
+        br = self.browser
+        if not br:
+            raise EngineError("Engine Cluster Failure: Browser offline.")
+            
+        try:
+            local_context = await br.new_context(
+                viewport=self.profile['viewport'],
+                user_agent=self.profile['userAgent'],
+                java_script_enabled=True,
+                bypass_csp=True
+            )
+            # Re-inject stealth for this context
+            stealth_js = StealthProtocol.get_injection_script(self.profile)
+            await local_context.add_init_script(stealth_js)
+            await self._inject_zenith_stealth(local_context, self.profile)
+            
+            page = await local_context.new_page()
             try:
                 # 1. Smart Timeout Adaptation
                 timeout = await self._get_dynamic_timeout(page, url)
@@ -445,16 +485,14 @@ class PlaywrightEngine(IBrowserEngine):
                         if not page.is_closed():
                             await page.close()
                     except: pass
-                if self.context:
+                if local_context:
                     try:
-                        await self.context.close()
+                        await local_context.close()
                     except Exception:
                         pass
-                if self.browser:
-                    try:
-                        await self.browser.close() # type: ignore
-                    except Exception:
-                        pass
+        except Exception as outer_e:
+            self.logger.error(f"Global Protocol Error: {outer_e}")
+            raise AuditFailedError(f"Global audit failure: {outer_e}")
         
         return [] # Final Path Safety
 
@@ -552,7 +590,7 @@ class PlaywrightEngine(IBrowserEngine):
             
             # Selection count based on density
             hover_count = min(len(targets), random.randint(2, 5))
-            sample = random.sample(targets, hover_count)
+            sample = random.sample(cast(List[Any], targets), hover_count)
             
             self.logger.debug(f"Simulating {hover_count} investigative hovers...")
             for el in sample:
@@ -782,26 +820,47 @@ class PlaywrightEngine(IBrowserEngine):
             const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4, h5, h6, a, button'));
             const issues = [];
             
-            elements.forEach(el => {
+            // Phase VII: Optimized Occlusion Analysis
+            // We only care about elements that are likely to float over something (absolute/fixed)
+            const floatingElements = elements.filter(el => {
                 const style = window.getComputedStyle(el);
-                if (style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 0) {
-                    const rect = el.getBoundingClientRect();
-                    const siblings = Array.from(el.parentElement ? el.parentElement.children : []);
-                    siblings.forEach(sib => {
-                        if (sib !== el && sib.innerText && sib.innerText.trim().length > 0) {
-                            const sRect = sib.getBoundingClientRect();
-                            const overlaps = !(rect.right < sRect.left || rect.left > sRect.right || 
-                                             rect.bottom < sRect.top || rect.top > sRect.bottom);
-                            if (overlaps) {
-                                issues.push({
-                                    html: el.outerHTML.slice(0, 150),
-                                    selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
-                                    target: sib.tagName.toLowerCase() + (sib.id ? '#' + sib.id : '')
-                                });
-                            }
-                        }
-                    });
-                }
+                return style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 50;
+            });
+            
+            if (floatingElements.length > 50) {
+                // Critical Performance Guard for massive DOMs (like Wikipedia)
+                // Limit analysis to the first 50 floating elements to prevent browser-hang
+                floatingElements.length = 50;
+            }
+
+            floatingElements.forEach(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) return;
+                
+                // Instead of O(N^2) check against ALL siblings, we use elementFromPoint
+                // at the four corners and center to detect underlying text-bearing nodes
+                const points = [
+                    {x: rect.left + 5, y: rect.top + 5},
+                    {x: rect.right - 5, y: rect.top + 5},
+                    {x: rect.left + 5, y: rect.bottom - 5},
+                    {x: rect.right - 5, y: rect.bottom - 5},
+                    {x: rect.left + rect.width/2, y: rect.top + rect.height/2}
+                ];
+                
+                points.forEach(p => {
+                    if (p.x < 0 || p.y < 0) return;
+                    el.style.pointerEvents = 'none'; // Temporarily pass-through
+                    const under = document.elementFromPoint(p.x, p.y);
+                    el.style.pointerEvents = ''; // Restore
+                    
+                    if (under && under !== el && under.innerText && under.innerText.trim().length > 0) {
+                         issues.push({
+                            html: el.outerHTML.slice(0, 150),
+                            selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                            target: under.tagName.toLowerCase() + (under.id ? '#' + under.id : '')
+                        });
+                    }
+                });
             });
             return issues;
         }"""
@@ -869,14 +928,20 @@ class PlaywrightEngine(IBrowserEngine):
     async def _analyze_target_size(self, page: Page) -> List[Violation]:
         """Item 36: Detect interactive elements < 44x44px."""
         script = """() => {
-            const targets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+            const allTargets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+            // Optimization: Limit analysis to first 200 interactive elements to prevent layout thrashing
+            const targets = allTargets.filter(t => {
+                const style = window.getComputedStyle(t);
+                return style.display !== 'none' && style.visibility !== 'hidden';
+            }).slice(0, 200);
+
             return targets.map(t => {
                 const rect = t.getBoundingClientRect();
                 return { 
                     html: t.outerHTML.slice(0, 200), 
                     width: rect.width, 
                     height: rect.height, 
-                    selector: t.tagName.toLowerCase() 
+                    selector: t.tagName.toLowerCase() + (t.id ? '#' + t.id : '')
                 };
             }).filter(t => t.width > 0 && (t.width < 44 || t.height < 44));
         }"""
@@ -975,13 +1040,9 @@ class PlaywrightEngine(IBrowserEngine):
         contexts = [("document", "document")]
         try:
             shadow_hosts = await page.evaluate("() => { \
-                const hosts = []; \
-                const walk = (node) => { \
-                    if (node.shadowRoot) hosts.push(node); \
-                    node.querySelectorAll('*').forEach(walk); \
-                }; \
-                walk(document.body); \
-                return hosts.map(h => h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')); \
+                return Array.from(document.querySelectorAll('*')) \
+                    .filter(el => el.shadowRoot) \
+                    .map(h => h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')); \
             }")
             for host_selector in shadow_hosts:
                 contexts.append(("shadow-root", host_selector))

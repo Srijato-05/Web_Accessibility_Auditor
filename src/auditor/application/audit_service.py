@@ -13,8 +13,11 @@ import time
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union, Annotated
+from typing import List, Dict, Any, Optional, Union, Annotated, cast
 from uuid import UUID
+from rich.console import Console # type: ignore
+from rich.table import Table # type: ignore
+from rich.panel import Panel # type: ignore
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -35,7 +38,7 @@ class AuditService:
     
     This service manages the transformation of raw target URLs into 
     structured accessibility reports.
-    
+
     Attributes:
         repository (IAuditRepository): The persistent storage layer for audit data.
         engine (Optional[IBrowserEngine]): The browser automation engine.
@@ -117,12 +120,17 @@ class AuditService:
             # Use injected engine if available, otherwise provision local mission engine
             engine = self.engine if self.engine else PlaywrightEngine(session.id)
             
+            if not engine:
+                raise AuditFailedError("Failed to provision browser engine.")
+
             self.logger.info("Starting analysis via browser engine...")
             violations = await engine.scan_url(url)
             
             # PHASE VII: FORENSIC TELEMETRY EXTRACTION
-            session.focus_path = engine.focus_path
-            session.aria_events = engine.aria_events
+            if hasattr(engine, 'focus_path'):
+                session.focus_path = getattr(engine, 'focus_path')
+            if hasattr(engine, 'aria_events'):
+                session.aria_events = getattr(engine, 'aria_events')
             
             # PHASE 3: ANALYSIS & AGGREGATION
             self.logger.info(f"Analysis Complete. Discovered {len(violations)} violations.")
@@ -138,7 +146,7 @@ class AuditService:
                 
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
                 try:
-                    remediation_plan = self._generate_remediation_plan(violations)
+                    remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations))
                     export_path = f"reports/exports/remediation_{session.id}.md"
                     os.makedirs(os.path.dirname(export_path), exist_ok=True)
                     with open(export_path, "w", encoding="utf-8") as f:
@@ -151,6 +159,8 @@ class AuditService:
                 self.metrics["total_violations_captured"] += len(violations)
                 self.metrics["consecutive_failures"] = 0 # RESET ON SUCCESS
                 
+                # High-Fidelity Terminal Dashboard Dispatch
+                self._display_terminal_summary(cast(List[Violation], violations), session)
                 self.logger.info(f"Audit Success for {url}. Repository Updated.")
 
         except NavigationError as ne:
@@ -198,6 +208,69 @@ class AuditService:
                 await asyncio.sleep(0.5 * (attempt + 1))
         
         self.logger.error(f"CRITICAL: Failed to save session {session.id} after {max_retries} attempts.")
+
+    def _display_terminal_summary(self, violations: List[Violation], session: AuditSession):
+        """Displays a clinical-grade summary of findings in the terminal."""
+        console = Console()
+        
+        # 1. Mission Header
+        status_color = "green" if session.status == SessionStatus.COMPLETED else "red"
+        console.print("\n")
+        console.print(Panel(
+            f"[bold white]SITE MISSION COMPLETE[/]\n"
+            f"[dim]URL:[/] [cyan]{session.target_url}[/]\n"
+            f"[dim]ID:[/]  [magenta]{session.id}[/]\n"
+            f"[dim]STATUS:[/] [{status_color}]{session.status.value.upper()}[/]",
+            title="[bold blue]AUDITOR.NEXT[/]",
+            expand=False
+        ))
+
+        # 2. Impact Breakdown Table
+        impact_counts = {
+            ImpactLevel.CRITICAL: 0,
+            ImpactLevel.SERIOUS: 0,
+            ImpactLevel.MODERATE: 0,
+            ImpactLevel.MINOR: 0
+        }
+        for v in violations:
+            impact_counts[v.impact] += 1
+
+        table = Table(title="Violation Inventory Matrix", show_header=True, header_style="bold magenta")
+        table.add_column("Impact", style="dim", width=12)
+        table.add_column("Rule ID", style="cyan")
+        table.add_column("Count", justify="right")
+        table.add_column("Status", justify="center")
+
+        impact_styles = {
+            ImpactLevel.CRITICAL: "bold red",
+            ImpactLevel.SERIOUS: "orange3",
+            ImpactLevel.MODERATE: "yellow",
+            ImpactLevel.MINOR: "green"
+        }
+
+        # Sub-Aggregation for the table display
+        rule_agg = {}
+        for v in violations:
+            key = (v.impact, v.rule_id)
+            rule_agg[key] = rule_agg.get(key, 0) + 1
+
+        for (impact, rule_id), count in sorted(rule_agg.items(), key=lambda x: x[0].value):
+            style = impact_styles.get(impact, "white")
+            table.add_row(
+                f"[{style}]{impact.name}[/]",
+                rule_id,
+                str(count),
+                "FAIL" if impact in [ImpactLevel.CRITICAL, ImpactLevel.SERIOUS] else "WARN"
+            )
+
+        console.print(table)
+
+        # 3. Health Score & Remediation Path
+        score = self._calculate_health_score(violations)
+        score_color = "green" if score > 80 else "yellow" if score > 50 else "red"
+        
+        console.print(f"\n[bold]MISSION HEALTH SCORE:[/] [{score_color}]{score}%[/]")
+        console.print(f"[dim]Remediation Patch-Set:[/] [cyan]reports/exports/remediation_{session.id}.md[/]\n")
 
     # --------------------------------------------------------------------------
     # ENGINE ANALYTICS LAYER
@@ -282,85 +355,8 @@ class AuditService:
         return float(f"{score_val:.2f}")
 
     # --------------------------------------------------------------------------
-    # ENGINE REMEDIATION: AUTOMATED CODE FIX GENERATION
+    # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
-
-    def generate_remediation_plan(self, violations: List[Violation]) -> str:
-        """
-        Generates a comprehensive remediation plan with code-level fixes.
-        """
-        plan = [
-            "# AUDITOR REMEDIATION PLAN",
-            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "---",
-            ""
-        ]
-        
-        # Priority Ranking
-        sorted_violations = sorted(
-            violations, 
-            key=lambda x: x.impact.value if x.impact else 99
-        )
-
-        for i, v in enumerate(sorted_violations):
-            if i >= 15: # Performance capping
-                plan.append(f"## ... and {len(violations) - 15} more violations.")
-                break
-            
-            plan.append(f"## [{v.impact.name}] {v.rule_id}")
-            plan.append(f"**Target Selector:** `{v.selector}`")
-            plan.append(f"**Issue:** {v.description}")
-            plan.append("**Proposed Technical Fix:**")
-            
-            fix = self._calculate_proposed_code_fix(v)
-            plan.append(f"```html\n{fix}\n```")
-            plan.append(f"**Reference Documentation:** [WCAG Technique]({v.help_url})")
-            plan.append("")
-
-        return "\n".join(plan)
-
-    def _calculate_proposed_code_fix(self, violation: Violation, node: Dict[str, Any]) -> str:
-        """
-        Cycle 12: Forensic Remediation Synthesis - Generates surgical code patches.
-        """
-        rule = str(violation.rule_id).upper()
-        selector = str(node.get("target", "element"))
-        html = str(node.get("html", ""))
-        
-        # 1. HEURISTIC-TARGET-036 (Interactive Target Size)
-        if "TARGET-036" in rule:
-            return f'/* Proposed CSS Fix */\n{selector} {{\n  min-width: 44px;\n  min-height: 44px;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n}}'
-            
-        # 2. HEURISTIC-ALT-050 (Missing/Generic Alt Text)
-        if "ALT-050" in rule:
-            if "alt=" in html:
-                return html.replace('alt=""', 'alt="[DESCRIPTIVE_TEXT_HERE]"').replace("alt=''", "alt='[DESCRIPTIVE_TEXT_HERE]'")
-            return html.replace("<img ", '<img alt="[DESCRIPTIVE_TEXT_HERE]" ')
-            
-        # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
-        if "SVG-ACC-301" in rule:
-            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
-            
-        # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
-        if "ARIA-REL-210" in rule:
-            return f'<!-- Ensure internal references are valid -->\n{html.replace("aria-", "id=\"UNIQUE_ID\" aria-")}'
-            
-        # 5. HEURISTIC-HEAD-047 (Skipped Heading Level)
-        if "HEAD-047" in rule:
-            # Shift heading to maintain logical hierarchy
-            return f'<!-- Logical Heading Shift -->\n{html.replace("<h", "<!-- Suggest shift to appropriate level -->\n<h")}'
-            
-        # 6. Standard ARIA fixes
-        if "aria" in rule.lower():
-            if "aria-label" not in html:
-                return html.replace(">", ' aria-label="DESCRIPTIVE_LABEL">', 1)
-            return html
-            
-        # 7. Color Contrast
-        if "color" in rule.lower() or "contrast" in rule.lower():
-            return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
-        
-        return "<!-- Manual review required: No automated patch synthesized. -->"
 
     # --------------------------------------------------------------------------
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
@@ -741,16 +737,51 @@ class AuditService:
         # Ensure error prevention for dosage and patient identity inputs
         return violations
 
-    # --------------------------------------------------------------------------
-    # ENGINE CORE: DEEP ARCHITECTURAL REGISTRY
-    # --------------------------------------------------------------------------
-
-    def register_zenith_hook(self, name: str, callback: Annotated[Any, "EngineHook"]):
-        """Registers an asynchronous diagnostic hook into the Engine Core."""
-        self.logger.info(f"ENGINE-HOOK: Registered '{name}' at T+{time.time()}.")
+    def _calculate_proposed_code_fix(self, violation: Violation, node: Dict[str, Any]) -> str:
+        """
+        Cycle 12: Forensic Remediation Synthesis - Generates surgical code patches.
+        """
+        rule = str(violation.rule_id).upper()
+        selector = str(node.get("target", "element"))
+        html = str(node.get("html", ""))
+        
+        # 1. HEURISTIC-TARGET-036 (Interactive Target Size)
+        if "TARGET-036" in rule:
+            return f'/* Proposed CSS Fix */\n{selector} {{\n  min-width: 44px;\n  min-height: 44px;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n}}'
+            
+        # 2. HEURISTIC-ALT-050 (Missing/Generic Alt Text)
+        if "ALT-050" in rule:
+            if "alt=" in html:
+                return html.replace('alt=""', 'alt="[DESCRIPTIVE_TEXT_HERE]"').replace("alt=''", "alt='[DESCRIPTIVE_TEXT_HERE]'")
+            return html.replace("<img ", '<img alt="[DESCRIPTIVE_TEXT_HERE]" ')
+            
+        # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
+        if "SVG-ACC-301" in rule:
+            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
+            
+        # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
+        if "ARIA-REL-210" in rule:
+            return f'<!-- Ensure internal references are valid -->\n{html.replace("aria-", "id=\"UNIQUE_ID\" aria-")}'
+            
+        # 5. HEURISTIC-HEAD-047 (Skipped Heading Level)
+        if "HEAD-047" in rule:
+            # Shift heading to maintain logical hierarchy
+            return f'<!-- Logical Heading Shift -->\n{html.replace("<h", "<!-- Suggest shift to appropriate level -->\n<h")}'
+            
+        # 6. Standard ARIA fixes
+        if "aria" in rule.lower():
+            if "aria-label" not in html:
+                return html.replace(">", ' aria-label="DESCRIPTIVE_LABEL">', 1)
+            return html
+            
+        # 7. Color Contrast
+        if "color" in rule.lower() or "contrast" in rule.lower():
+            return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
+        
+        return "<!-- Manual review required: No automated patch synthesized. -->"
 
     # [ BLOCK: COMPLIANCE MAPPER ]
-    def _generate_remediation_plan(self, violations: List[Violation]) -> str:
+    def generate_remediation_plan(self, violations: List[Violation]) -> str:
         """Cycle 7/12: Remediation Hub v2 - Generates high-fidelity developer patch-sets."""
         plan = "# Accessibility Remediation Patch-Set\n"
         plan += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -767,7 +798,7 @@ class AuditService:
                 # Synthesis Engine: Prefer node-specific hints, then fallback to algorithmic generation
                 fix = node.get("suggested_fix")
                 if not fix or fix == "Consult WCAG documentation.":
-                    fix = self._calculate_proposed_code_fix(v, node)
+                    fix = AuditService._calculate_proposed_code_fix(self, v, node)
                 
                 plan += f"### Target: `{target}`\n"
                 plan += "```html\n"

@@ -62,7 +62,7 @@ class BatchAuditManager:
             "last_sweep_duration_seconds": 0.0,
             "average_processing_time": 0.0
         }
-        self.queue = RedisTaskQueue()
+        self.queue = RedisTaskQueue(db_engine=self.engine)
         
         # Phase VII: Dynamic Auto-Scaling
         self._dynamic_throttle_ratio: float = 1.0

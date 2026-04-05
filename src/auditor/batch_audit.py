@@ -53,24 +53,34 @@ Accessibility Auditor Batch CLI [v0.1.0]
 Usage: python batch_audit.py [options]
 
 Options:
-  --help, -h    Show this help message
-  --add [url]   Add a new target domain to the audit queue
-  --dispatch    Dispatch all active domains to the distributed Redis cluster
-  --report      Generate a stakeholder report (HTML/JSON) from the latest session
-  --discover [url]  Autonomously discover and dispatch audit targets from sitemaps/robots.txt
-  --worker      Start an autonomous worker node to process the audit queue
-  --dashboard   Launch the real-time TUI cluster monitor
+  --help, -h          Show this help message
+  --add-target [url]  Add a new target domain to the audit registry
+  --dispatch          Dispatch all active domains to the audit queue (Redis/SQLite)
+  --report            Generate a stakeholder report (HTML/JSON) from the latest session
+  --discover [url]    Autonomously discover and dispatch audit targets from sitemaps/robots.txt
+  --worker            Start an autonomous worker node to process the audit queue
+  --dashboard         Launch the real-time TUI cluster monitor
         """)
         return
 
-    if len(sys.argv) >= 3 and sys.argv[1] == "--add":
-        async with AsyncSession(engine) as db_session:
-            batch_repo = SqlAlchemyTargetRepository(db_session)
-            target_url = sys.argv[2]
-            new_domain = AuditTarget(url=target_url)
-            await batch_repo.add_domain(new_domain)
-            auditor_logger.info(f"Target Added: {target_url}")
-            return
+    if len(sys.argv) >= 3 and sys.argv[1] == "--add-target":
+        try:
+            async with AsyncSession(engine) as db_session:
+                batch_repo = SqlAlchemyTargetRepository(db_session)
+                target_url = sys.argv[2]
+                new_domain = AuditTarget(url=target_url)
+                await batch_repo.add_domain(new_domain)
+                auditor_logger.info(f"Target Registered in Registry: {target_url}")
+                
+                # Auto-dispatch if possible to make it user-friendly
+                auditor_logger.info("Auto-Dispatching target to Autonomous Queue...")
+                batch_orchestrator = BatchAuditManager(engine)
+                await batch_orchestrator.dispatch_batch_audit()
+        except Exception as e:
+            auditor_logger.error(f"Failed to register/dispatch target: {e}")
+        finally:
+            await engine.dispose()
+        return
 
     if "--dispatch" in sys.argv:
         try:
@@ -108,6 +118,8 @@ Options:
         except Exception as e:
             auditor_logger.critical(f"Discovery Failure: {e}")
         finally:
+            if 'link_extractor' in locals() and link_extractor:
+                await link_extractor.teardown()
             await engine.dispose()
         return
     
