@@ -26,8 +26,26 @@ class AuditorFormatter(logging.Formatter):
 
     def format(self, record):
         log_fmt = self.FORMATS.get(record.levelno)
+        # Using a fresh formatter to avoid state leakage
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
+
+class AuditorJSONFormatter(logging.Formatter):
+    """Deep-Forensic JSON Formatter."""
+    def format(self, record):
+        log_obj = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Include extra attributes if they exist
+        if hasattr(record, "session_id"):
+            log_obj["session_id"] = str(record.session_id)
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_obj)
 
 def setup_auditor_logging(level=logging.INFO):
     """Initializes the Auditor Logging stack."""
@@ -41,7 +59,7 @@ def setup_auditor_logging(level=logging.INFO):
 
     # Structured JSON File Handler for Batch audits
     fh = logging.FileHandler("reports/logs/auditor.log")
-    fh.setFormatter(logging.Formatter('{"timestamp": "%(asctime)s", "level": "%(levelname)s", "name": "%(name)s", "message": "%(message)s"}'))
+    fh.setFormatter(AuditorJSONFormatter())
     logger.addHandler(fh)
 
     logger.info("Auditor Logging Infrastructure Initialized. System initialized.")

@@ -81,5 +81,26 @@ class StealthProtocol:
                 Promise.resolve({{ state: Notification.permission }}) :
                 originalQuery(parameters)
             );
+
+            // 8. WebRTC Sanitization (Anti-Leak)
+            if (window.RTCPeerConnection) {{
+                const originalCreateOffer = RTCPeerConnection.prototype.createOffer;
+                RTCPeerConnection.prototype.createOffer = function() {{
+                    return Promise.resolve({{ sdp: 'v=0\\r\\no=- 12345 67890 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\n' }});
+                }};
+            }}
+
+            // 9. Timezone & Locale Normalization
+            Intl.DateTimeFormat.prototype.resolvedOptions = function() {{
+                return {{
+                    locale: 'en-US',
+                    calendar: 'gregory',
+                    numberingSystem: 'latn',
+                    timeZone: 'UTC',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }};
+            }};
         }})();
         """

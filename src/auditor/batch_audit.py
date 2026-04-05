@@ -1,6 +1,10 @@
 import asyncio
 import sys
 import os
+import logging
+import json
+from datetime import datetime
+from typing import Optional, Any, Dict, Union
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -13,6 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
 # Core Technical Imports
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
+from auditor.infrastructure.task_model import TaskModel # type: ignore
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
@@ -24,19 +29,22 @@ from auditor.application.crawl_service import CrawlService # type: ignore
 from auditor.application.batch_service import BatchAuditManager # type: ignore
 from auditor.application.reporter import AuditReporter # type: ignore
 from auditor.application.discovery_service import DiscoveryService # type: ignore
+from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
 from auditor.application.tui_dashboard import AuditorDashboard # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 
 DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 
 async def main():
-    auditor_logger.info("Accessibility Auditor Batch CLI [v0.1.0] Initialized.")
-
-    # 1. Environment Setup
+    """Batch Audit Orchestrator CLI"""
+    # Hardware/Database Engine Initialization
     engine = create_async_engine(DATABASE_URL, echo=False)
-
+    
+    # Global Task Registry (Phase XIII)
+    from auditor.infrastructure.task_model import task_metadata # type: ignore
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(task_metadata.create_all)
 
     # 3. CLI Argument Handling
     if "--help" in sys.argv or "-h" in sys.argv:
@@ -50,6 +58,7 @@ Options:
   --dispatch    Dispatch all active domains to the distributed Redis cluster
   --report      Generate a stakeholder report (HTML/JSON) from the latest session
   --discover [url]  Autonomously discover and dispatch audit targets from sitemaps/robots.txt
+  --worker      Start an autonomous worker node to process the audit queue
   --dashboard   Launch the real-time TUI cluster monitor
         """)
         return
@@ -88,46 +97,27 @@ Options:
         try:
             target_index = sys.argv.index("--discover") + 1
             if target_index < len(sys.argv):
-                from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
-                queue = RedisTaskQueue()
-                discovery = DiscoveryService(queue)
-                await discovery.run_discovery_session(sys.argv[target_index])
+                queue = RedisTaskQueue(db_engine=engine)
+                link_extractor = PlaywrightLinkExtractor()
+                crawler = LinkDiscoveryService(link_extractor)
+                
+                async with AsyncSession(engine) as db_session:
+                    repo = SqlAlchemyTargetRepository(db_session)
+                    discovery = DiscoveryService(queue, crawler, repo)
+                    await discovery.run_discovery_session(sys.argv[target_index])
         except Exception as e:
             auditor_logger.critical(f"Discovery Failure: {e}")
         finally:
             await engine.dispose()
         return
     
-    if "--local" in sys.argv:
+    if "--worker" in sys.argv:
         try:
             from auditor.application.worker import AuditWorker # type: ignore
-            from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
-            queue = RedisTaskQueue()
-            await queue.connect() # Will fallback to LOCAL automatically
-            
-            worker = AuditWorker("LOCAL-ORCHESTRATOR", engine, queue)
-            auditor_logger.info("Initializing Local Autonomous Process...")
-            
-            # Start Worker Task
-            worker_task = asyncio.create_task(worker.start())
-            
-            # Start Batch Logic in same loop
-            batch_orchestrator = BatchAuditManager(engine)
-            await batch_orchestrator.run_batch_audit()
-            
-            # Allow worker to finish
-            await asyncio.sleep(5)
-            worker_task.cancel()
-            
-            # GENERATE REPORTS (Phase IV Visibility)
-            async with AsyncSession(engine) as report_session:
-                reporter = AuditReporter(report_session)
-                res = await reporter.generate_summary_report()
-                if res.get("html"):
-                    auditor_logger.info(f"Local Audit Report Live: {res['html']}")
-                
+            worker = AuditWorker("CLI-WORKER", engine)
+            await worker.start()
         except Exception as e:
-            auditor_logger.critical(f"Local Execution Failure: {e}")
+            auditor_logger.critical(f"Worker Failure: {e}")
         finally:
             await engine.dispose()
         return

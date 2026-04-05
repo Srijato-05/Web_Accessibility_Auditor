@@ -16,6 +16,7 @@ import os
 import sys
 import logging
 from typing import Dict, Any, Optional
+from uuid import uuid4
 
 # IDE PATH RECONCILIATION
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -44,8 +45,8 @@ class AuditWorker:
     
     def __init__(self, worker_id: str = "WORKER-01", engine: Optional[Any] = None, queue: Optional[RedisTaskQueue] = None):
         self.worker_id = worker_id
-        self.queue = queue if queue else RedisTaskQueue(REDIS_URL)
         self.engine = engine if engine else create_async_engine(DATABASE_URL, echo=False)
+        self.queue = queue if queue else RedisTaskQueue(REDIS_URL, db_engine=self.engine)
         self.logger = auditor_logger.getChild(f"Worker.{worker_id}")
         self._active = True
 
@@ -55,6 +56,9 @@ class AuditWorker:
         await self.queue.connect()
         
         try:
+            # Phase XIII: Self-Healing Recovery
+            await self.queue.reset_abandoned_tasks()
+
             while self._active:
                 task = await self.queue.pop_task(timeout=5)
                 if not task:
@@ -69,6 +73,7 @@ class AuditWorker:
 
     async def _process_task(self, task: Dict[str, Any]):
         """Dispatches tasks to the appropriate service layer."""
+        task_id = task.get("id")
         task_type = task.get("type")
         data = task.get("data", {})
         url = data.get("url")
@@ -77,12 +82,20 @@ class AuditWorker:
             self.logger.error("Invalid Task: Missing URL.")
             return
 
-        self.logger.info(f"Task Received [{task_type}]: {url}")
-        
-        if task_type == "full_site_audit":
-            await self._run_site_audit(url)
-        else:
-            self.logger.warning(f"Unknown task type: {task_type}")
+        try:
+            if task_type == "full_site_audit":
+                await self._run_site_audit(url)
+            elif task_type == "single_url_audit":
+                await self._run_single_audit(url)
+            else:
+                self.logger.warning(f"Unknown task type: {task_type}")
+                await self.queue.fail_task(task_id, f"Unknown task type: {task_type}")
+                return
+            
+            await self.queue.complete_task(task_id)
+        except Exception as e:
+            self.logger.error(f"Task Execution Failure [{task_id}]: {e}")
+            await self.queue.fail_task(task_id, str(e))
 
     async def _run_site_audit(self, url: str):
         """Executes a comprehensive site audit with persistence isolation."""
@@ -111,6 +124,28 @@ class AuditWorker:
                 self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
             except Exception as e:
                 self.logger.error(f"Distributed Audit Failure [{url}]: {e}")
+
+    async def _run_single_audit(self, url: str):
+        """Executes a surgical audit for a single page with persistence isolation."""
+        async with AsyncSession(self.engine) as db_session:
+            # 1. Initialize Infrastructure Components
+            repo = SqlAlchemyAuditRepository(db_session)
+            browser = PlaywrightEngine(uuid4()) # Fresh engine session
+            
+            # 2. Assemble Service Layer
+            audit_service = AuditService(browser, repo)
+            
+            # 3. Execution
+            try:
+                self.logger.info(f"--- [ STARTING SURGICAL AUDIT: {url} ] ---")
+                await audit_service.execute_audit(url)
+                self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
+            except Exception as e:
+                self.logger.error(f"Surgical Audit Failure [{url}]: {e}")
+            finally:
+                # Cleanup browser cluster
+                if browser:
+                    await browser._secure_teardown()
 
 if __name__ == "__main__":
     worker = AuditWorker()

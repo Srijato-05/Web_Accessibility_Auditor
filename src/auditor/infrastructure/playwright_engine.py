@@ -154,23 +154,68 @@ class PlaywrightEngine(IBrowserEngine):
             if not browser_inst:
                 raise EngineError("Engine Cluster Failure: Chromium could not be spawned.")
                 
-            self.context = await browser_inst.new_context(
-                viewport=self.profile['viewport'],
-                user_agent=self.profile['userAgent'],
-                java_script_enabled=True,
-                bypass_csp=True,
-                device_scale_factor=random.choice([1, 2]),
-                is_mobile=False,
-                has_touch=False
-            )
+            # Cycle 3: Auto-Healing Sentinel (Retry Loop)
+            max_init_retries = 2
+            for attempt in range(max_init_retries + 1):
+                try:
+                    self.context = await browser_inst.new_context(
+                        viewport=self.profile['viewport'],
+                        user_agent=self.profile['userAgent'],
+                        java_script_enabled=True,
+                        bypass_csp=True,
+                        device_scale_factor=random.choice([1, 2]),
+                        is_mobile=False,
+                        has_touch=False,
+                        # Cycle 3: HAR Network Harvesting
+                        record_har_path=f"reports/forensics/har/session_{self.session_id}.har" if self.session_id else None
+                    )
+                    break
+                except Exception as ce:
+                    if attempt < max_init_retries:
+                        self.logger.warning(f"Engine Context Initialization Attempt {attempt+1} Failed: {ce}. Retrying...")
+                        await asyncio.sleep(1)
+                    else:
+                        raise EngineError(f"Engine Context Failure: Stealth context initialization failed after {max_init_retries+1} attempts.")
             
             context_inst = self.context
             if not context_inst:
                 raise EngineError("Engine Context Failure: Stealth context initialization failed.")
 
+            # Phase X: Forensic Telemetry Bridge Implementation
+            async def _telemetry_handler(source, type, data):
+                self.logger.debug(f"Forensic Telemetry Received [{type}]: {data.get('selector')}")
+                if type == "FOCUS":
+                    self.focus_path.append(data)
+                elif type == "ARIA":
+                    self.aria_events.append(data)
+            
+            await context_inst.expose_binding("__report_forensic_telemetry", _telemetry_handler)
+
             # DEEP STALKER: Injecting high-fidelity JS stealth protocol
             stealth_js = StealthProtocol.get_injection_script(self.profile)
             await context_inst.add_init_script(stealth_js)
+            
+            # Phase XI: JA3/TLS Simulation (Header Rotation & Order)
+            # Chrome typically uses a specific header order to form its fingerprint
+            # Cycle 3: HTTP/2 Perception Suite (Multiplexed Stealth)
+            await context_inst.set_extra_http_headers({
+                "sec-ch-ua": f"\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"{self.profile['clientHints']['uaFullVersion'].split('.')[0]}\", \"Chromium\";v=\"{self.profile['clientHints']['uaFullVersion'].split('.')[0]}\"",
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": f"\"{self.profile['clientHints']['platform']}\"",
+                "upgrade-insecure-requests": "1",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "sec-fetch-site": "none",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-user": "?1",
+                "sec-fetch-dest": "document",
+                "accept-encoding": "gzip, deflate, br",
+                "accept-language": "en-US,en;q=0.9",
+                "priority": "u=0, i", # Cycle 3: HTTP/2 priority frame simulation
+                "x-requested-with": "XMLHttpRequest" if random.random() > 0.8 else "" # Occasional XHR mimicry
+            })
+
+            # Phase X: Inject Forensic Probes via Zenith Stealth
+            await self._inject_zenith_stealth(context_inst, self.profile)
             
             self.logger.info(f"Engine Cluster ONLINE | Persona: {self.profile['name']} | VP: {self.profile['viewport']['width']}x{self.profile['viewport']['height']}")
         
@@ -189,16 +234,56 @@ class PlaywrightEngine(IBrowserEngine):
                 navigator.__proto__ = newProto;
 
                 // 2. Hardware API Spoofing
-                Object.defineProperty(navigator, 'deviceMemory', {{ get: () => {profile['deviceMemory']} }});
-                Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => {profile['hardwareConcurrency']} }});
-                Object.defineProperty(navigator, 'platform', {{ get: () => '{profile['platform']}' }});
+                Object.defineProperty(navigator, 'deviceMemory', {{ get: () => {profile['hardware']['deviceMemory']} }});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => {profile['hardware']['hardwareConcurrency']} }});
+                Object.defineProperty(navigator, 'platform', {{ get: () => '{profile['hardware']['platform']}' }});
 
                 // 3. WebGL Intelligence Spoofing
                 const getParameter = WebGLRenderingContext.prototype.getParameter;
                 WebGLRenderingContext.prototype.getParameter = function(parameter) {{
-                    if (parameter === 37445) return '{profile['vendor']}';
-                    if (parameter === 37446) return '{profile['renderer']}';
+                    if (parameter === 37445) return '{profile['hardware']['vendor']}';
+                    if (parameter === 37446) return '{profile['hardware']['renderer']}';
                     return getParameter.apply(this, arguments);
+                }};
+
+                // 4. Cycle 2: Canvas Entropy Projection
+                const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                HTMLCanvasElement.prototype.toDataURL = function(type) {{
+                    const context = this.getContext('2d');
+                    if (context) {{
+                        const imageData = context.getImageData(0, 0, this.width, this.height);
+                        // Cycle 6: Canvas Jitter v2 (Pixel-Shift Entropy)
+                        for (let i = 0; i < 20; i++) {{
+                            const idx = Math.floor(Math.random() * imageData.data.length / 4) * 4;
+                            imageData.data[idx] = (imageData.data[idx] + 1) % 256; // Light shifting
+                            imageData.data[idx + 1] = (imageData.data[idx + 1] ^ 1); // Atomic XOR
+                        }}
+                        context.putImageData(imageData, 0, 0);
+                    }}
+                    return originalToDataURL.apply(this, arguments);
+                }};
+
+                // 5. Cycle 2: AudioContext Spoofing
+                const originalGetChannelData = AudioBuffer.prototype.getChannelData;
+                AudioBuffer.prototype.getChannelData = function() {{
+                    const result = originalGetChannelData.apply(this, arguments);
+                    for (let i = 0; i < result.length; i += 100) {{
+                        result[i] += Math.random() * 0.0001; 
+                    }}
+                    return result;
+                }};
+
+                // 6. Cycle 4: Intl API Buffing (Locale/Timezone Stealth)
+                const originalDateTimeFormat = Intl.DateTimeFormat;
+                Intl.DateTimeFormat = function(locale, options) {{
+                    const personaLocale = '{profile.get('locale', 'en-US')}';
+                    return new originalDateTimeFormat(personaLocale, options);
+                }};
+                
+                const originalNumberFormat = Intl.NumberFormat;
+                Intl.NumberFormat = function(locale, options) {{
+                    const personaLocale = '{profile.get('locale', 'en-US')}';
+                    return new originalNumberFormat(personaLocale, options);
                 }};
 
                 // 7. Permission Normalization
@@ -209,13 +294,26 @@ class PlaywrightEngine(IBrowserEngine):
                     originalQuery(parameters)
                 );
 
-                // 8. Phase VII: ARIA-Live Monitoring (MutationObserver)
-                window._aria_events = [];
+                // 8. Phase X: Forensic Telemetry Integration
+                // Focus Tracking
+                document.addEventListener('focusin', (e) => {{
+                    const el = e.target;
+                    const rect = el.getBoundingClientRect();
+                    window.__report_forensic_telemetry('FOCUS', {{
+                        timestamp: Date.now(),
+                        tagName: el.tagName,
+                        selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                        x: rect.left + rect.width / 2,
+                        y: rect.top + rect.height / 2
+                    }});
+                }}, true);
+
+                // ARIA Mutation Observer
                 const observer = new MutationObserver((mutations) => {{
                     mutations.forEach((mutation) => {{
                         const target = mutation.target;
                         if (target.getAttribute && (target.getAttribute('aria-live') || target.getAttribute('role') === 'alert')) {{
-                            window._aria_events.push({{
+                            window.__report_forensic_telemetry('ARIA', {{
                                 timestamp: Date.now(),
                                 type: 'ARIA_LIVE_UPDATE',
                                 content: target.innerText.slice(0, 100),
@@ -225,9 +323,36 @@ class PlaywrightEngine(IBrowserEngine):
                     }});
                 }});
                 observer.observe(document.body, {{ childList: true, subtree: true, characterData: true }});
+                
+                // 10. High-Density Focus-Path Reconstruction
+                document.addEventListener('focus', (e) => {{
+                    const el = e.target;
+                    const rect = el.getBoundingClientRect();
+                    window.__report_forensic_telemetry('FOCUS', {{
+                        timestamp: Date.now(),
+                        selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                        x: rect.left + window.scrollX,
+                        y: rect.top + window.scrollY,
+                        density: 'HIGH'
+                    }});
+                }}, true);
 
-                // 5. Chrome Runtime Simulation
-                window.chrome = {{ runtime: {{}} }};
+                // 6. WebDriver Apex Masking (Cycle 7)
+                Object.defineProperty(navigator, 'webdriver', {{get: () => undefined}});
+                Object.defineProperty(navigator, 'languages', {{get: () => ['en-US', 'en']}});
+                Object.defineProperty(navigator, 'plugins', {{get: () => ({{length: 5}})}});
+                
+                // Add some fake plugins
+                const plugins = [
+                    {{name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format'}},
+                    {{name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format'}},
+                    {{name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format'}},
+                    {{name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format'}},
+                    {{name: 'Native Client', filename: 'internal-nacl-plugin', description: ''}}
+                ];
+                Object.setPrototypeOf(navigator.plugins, PluginArray.prototype);
+                
+                window.__APEX_STEALTH_ACTIVE__ = true;
             }})();
         """
         await context.add_init_script(stealth_code)
@@ -260,6 +385,15 @@ class PlaywrightEngine(IBrowserEngine):
                 await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
                 await self._stabilize_dom(page)
 
+                # Phase XI: High-Density Focus-Path Simulation (30+ nodes)
+                self.logger.debug("Simulating High-Density Keyboard Navigation...")
+                for _ in range(30):
+                    await page.keyboard.press("Tab")
+                    await asyncio.sleep(0.05) # High-speed sweep
+
+                # Phase XI: Infinite Scroll Zone Auditing
+                await self._trigger_infinite_scroll_buffer(page)
+
                 # 3. Analytical Protocol [ZAP-V5]
                 self.logger.info("Executing Engine Analytical Protocol [ZAP-V5]...")
                 start_time = time.time()
@@ -284,6 +418,11 @@ class PlaywrightEngine(IBrowserEngine):
                 raise AuditFailedError(f"Audit failed for {url}: {e}")
             finally:
                 await page.close()
+                if self.context:
+                    try:
+                        await self.context.close()
+                    except Exception:
+                        pass
                 if self.browser:
                     try:
                         await self.browser.close() # type: ignore
@@ -313,6 +452,9 @@ class PlaywrightEngine(IBrowserEngine):
             # 1. Realistic Bezier Mouse Movement
             await self._simulate_human_mouse(page)
             
+            # 1b. Cycle 4: Probabilistic Human Hovers
+            await self._simulate_human_hovers(page)
+            
             # 2. Variable Jitter Scrolling
             scroll_count = random.randint(3, 7)
             for _ in range(scroll_count):
@@ -330,28 +472,74 @@ class PlaywrightEngine(IBrowserEngine):
         except Exception as e:
             self.logger.warning(f"Stealth Stabilization minor failure: {e}")
 
+    async def _trigger_infinite_scroll_buffer(self, page: Page):
+        """Simulates infinite scroll to trigger lazy-loaded accessibility zones."""
+        self.logger.info("Engaging Infinite Scroll Zone Buffer...")
+        try:
+            for _ in range(5):
+                # Scroll down in large chunks to trigger mutations
+                await page.mouse.wheel(0, 1500)
+                await asyncio.sleep(0.8)
+            # Return to top for analysis
+            await page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            self.logger.warning(f"Infinite scroll buffer failed: {e}")
+
     async def _simulate_human_mouse(self, page: Page):
-        """Simulates non-linear, human-like mouse paths."""
+        """Simulates non-linear, human-like mouse paths with Micro-Jitter."""
         try:
             # Move from random start to random end via Bezier
-            start_x, start_y = random.randint(0, 100), random.randint(0, 100)
-            end_x, end_y = random.randint(400, 800), random.randint(300, 600)
+            start_x, start_y = random.randint(0, 200), random.randint(0, 200)
+            end_x, end_y = random.randint(400, 1000), random.randint(300, 800)
             
-            # Control points for Bezier
-            cp1_x, cp1_y = random.randint(100, 700), random.randint(0, 200)
-            cp2_x, cp2_y = random.randint(100, 700), random.randint(400, 800)
+            # Control points for Bezier (Curvature)
+            cp1_x, cp1_y = random.randint(100, 900), random.randint(0, 300)
+            cp2_x, cp2_y = random.randint(100, 900), random.randint(500, 900)
             
-            steps = 20
+            steps = 45 # Increased for high-fidelity movement
             for i in range(steps + 1):
                 t = i / steps
-                # Cubic Bezier calculation
-                x = (1-t)**3 * start_x + 3*(1-t)**2*t * cp1_x + 3*(1-t)*t**2 * cp2_x + t**3 * end_x
-                y = (1-t)**3 * start_y + 3*(1-t)**2*t * cp1_y + 3*(1-t)*t**2 * cp2_y + t**3 * end_y
-                await page.mouse.move(x, y)
-                if i % 5 == 0:
-                    await asyncio.sleep(0.01)
-        except Exception:
-            pass
+                # Cubic Bezier calculation with added micro-jitter
+                x = (1-t)**3 * start_x + 3*(1-t)**2 * t * cp1_x + 3*(1-t)*t**2 * cp2_x + t**3 * end_x
+                y = (1-t)**3 * start_y + 3*(1-t)**2 * t * cp1_y + 3*(1-t)*t**2 * cp2_y + t**3 * end_y
+                
+                # Apply Micro-Jitter (Human hand instability)
+                jitter_x = x + random.uniform(-1.5, 1.5)
+                jitter_y = y + random.uniform(-1.5, 1.5)
+                
+                await page.mouse.move(jitter_x, jitter_y)
+                # Variable speed simulation (Ease-in, Ease-out)
+                wait_time = 0.005 + (0.015 * math.sin(t * math.pi))
+                await asyncio.sleep(wait_time)
+        except Exception as e:
+            self.logger.warning(f"Mouse simulation minor deviation: {e}")
+
+    async def _simulate_human_hovers(self, page: Page):
+        """Cycle 4: Probabilistic Hover Suite (mimicking investigative interaction)."""
+        try:
+            # Identify interactive elements (links, buttons, inputs)
+            targets = await page.query_selector_all('a, button, input[type="submit"], [role="button"]')
+            if not targets:
+                return
+            
+            # Selection count based on density
+            hover_count = min(len(targets), random.randint(2, 5))
+            sample = random.sample(targets, hover_count)
+            
+            self.logger.debug(f"Simulating {hover_count} investigative hovers...")
+            for el in sample:
+                if await el.is_visible():
+                    box = await el.bounding_box()
+                    if box:
+                        # Move to element center with small jitter
+                        await page.mouse.move(
+                            box['x'] + box['width'] / 2 + random.uniform(-2, 2),
+                            box['y'] + box['height'] / 2 + random.uniform(-2, 2)
+                        )
+                        await asyncio.sleep(random.uniform(0.3, 0.8)) # "Thinking" pause
+        except Exception as e:
+            self.logger.warning(f"Hover simulation minor deviation: {e}")
 
     async def _run_proprietary_heuristics(self, page: Page) -> List[Violation]:
         """
@@ -400,12 +588,255 @@ class PlaywrightEngine(IBrowserEngine):
         return custom_v
 
     async def _run_forensic_suite(self, page: Page) -> List[Violation]:
-        """Orchestrates Phase IV clinical forensics."""
+        """Orchestrates Phase XI clinical forensics (Cycle 2 Enhanced)."""
         violations = []
         violations.extend(await self._analyze_target_size(page))
         violations.extend(await self._analyze_alt_text_quality(page))
         violations.extend(await self._verify_skip_links(page))
         violations.extend(await self._analyze_heading_hierarchy(page))
+        violations.extend(await self._analyze_aria_relationships(page)) # Cycle 2: ARIA Engine
+        violations.extend(await self._analyze_svg_accessibility(page)) # Cycle 3: Vector Forensics
+        violations.extend(await self._analyze_form_grouping(page)) # Cycle 4: Form-Field Forensics
+        violations.extend(await self._analyze_aria_live_regions(page)) # Cycle 5: Dynamic Mutations
+        violations.extend(await self._analyze_dynamic_contrast(page)) # Cycle 6: Overlap Forensics
+        violations.extend(await self._analyze_focus_traps(page)) # Cycle 7: Navigation Forensics
+        return violations
+
+    async def _analyze_aria_live_regions(self, page: Page) -> List[Violation]:
+        """Cycle 5: Detect dynamic content updates lacking ARIA live indicators."""
+        # This heuristic looks for elements that are likely dynamic targets but lack aria-live
+        script = """() => {
+            const dynamicIndicators = ['status', 'alert', 'log', 'timer'];
+            const suspicious = Array.from(document.querySelectorAll('div, span, section'));
+            const issues = [];
+            
+            suspicious.forEach(el => {
+                const id = el.id ? el.id.toLowerCase() : '';
+                const cls = el.className ? String(el.className).toLowerCase() : '';
+                const isDynamicName = id.includes('update') || id.includes('live') || id.includes('status') ||
+                                    cls.includes('update') || cls.includes('live') || cls.includes('status');
+                
+                const hasLive = el.getAttribute('aria-live') || el.getAttribute('role') === 'status' || el.getAttribute('role') === 'alert';
+                
+                if (isDynamicName && !hasLive) {
+                    issues.push({
+                        html: el.outerHTML.slice(0, 200),
+                        selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+                    });
+                }
+            });
+            return issues;
+        }"""
+        raw_issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in raw_issues:
+            sel = str(issue.get('selector', 'element'))
+            html = str(issue.get('html', ''))
+            violations.append(Violation(
+                rule_id="HEURISTIC-LIVE-REG-501",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Potential missing ARIA live-region: Element ID/Class suggests dynamic updates without assistive notification.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/status-messages.html",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": "Dynamic container detected without aria-live or status role."}],
+                tags=["auditor", "forensics", "dynamic-v3"]
+            ))
+        return violations
+
+    async def _analyze_form_grouping(self, page: Page) -> List[Violation]:
+        """Cycle 4: Detect related radio/checkbox groups missing structural fieldsets."""
+        script = """() => {
+            const groups = {};
+            const inputs = Array.from(document.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
+            
+            inputs.forEach(input => {
+                const name = input.getAttribute('name');
+                if (name) {
+                    if (!groups[name]) groups[name] = [];
+                    groups[name].push(input);
+                }
+            });
+            
+            const issues = [];
+            for (const name in groups) {
+                if (groups[name].length > 1) {
+                    const first = groups[name][0];
+                    // Traverse up to find fieldset or group role
+                    let parent = first.parentElement;
+                    let hasContainer = false;
+                    while (parent && parent !== document.body) {
+                        if (parent.tagName === 'FIELDSET' || parent.getAttribute('role') === 'group') {
+                            hasContainer = true;
+                            break;
+                        }
+                        parent = parent.parentElement;
+                    }
+                    if (!hasContainer) {
+                        issues.push({
+                            name: name,
+                            count: groups[name].length,
+                            html: first.outerHTML.slice(0, 200),
+                            selector: `input[name="${name}"]`
+                        });
+                    }
+                }
+            }
+            return issues;
+        }"""
+        form_issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in form_issues:
+            name = str(issue.get('name', ''))
+            count = issue.get('count', 0)
+            html = str(issue.get('html', ''))
+            sel = str(issue.get('selector', ''))
+            
+            violations.append(Violation(
+                rule_id="HEURISTIC-FORM-GRP-401",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description=f"Logical input group '{name}' ({count} items) lacks structural container (fieldset/role='group').",
+                help_url="https://www.w3.org/WAI/tutorials/forms/grouping/",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": "Related inputs found without Fieldset or Role=Group."}],
+                tags=["auditor", "forensics", "forms-v2"]
+            ))
+        return violations
+
+    async def _analyze_svg_accessibility(self, page: Page) -> List[Violation]:
+        """Cycle 3: High-Density SVG Forensics (detecting inaccessible vector paths)."""
+        script = """() => {
+            const svgs = Array.from(document.querySelectorAll('svg'));
+            const issues = [];
+            svgs.forEach(svg => {
+                const hasTitle = svg.querySelector('title');
+                const hasLabel = svg.getAttribute('aria-label') || svg.getAttribute('aria-labelledby');
+                const isHidden = svg.getAttribute('aria-hidden') === 'true';
+                
+                if (!isHidden && !hasTitle && !hasLabel) {
+                    issues.push({
+                        html: svg.outerHTML.slice(0, 200),
+                        selector: svg.tagName.toLowerCase() + (svg.id ? '#' + svg.id : '')
+                    });
+                }
+            });
+            return issues;
+        }"""
+        raw_issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in raw_issues:
+            sel = str(issue.get('selector', 'svg'))
+            html = str(issue.get('html', ''))
+            
+            # Cycle 6: SVG Auto-Correction snippet
+            s_title = "Descriptive Vector Graphic"
+            
+            violations.append(Violation(
+                rule_id="HEURISTIC-SVG-ACC-301",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Inaccessible SVG detected: Vector graphic lacks descriptive title or ARIA label.",
+                help_url="https://www.w3.org/TR/SVG-access/",
+                selector=sel,
+                nodes=[{
+                    "html": html, 
+                    "target": sel, 
+                    "failure_summary": "Missing <title> or ARIA label in vector graphic.",
+                    "suggested_fix": f"Add <title>{s_title}</title> as the first child of the <svg> element."
+                }],
+                tags=["auditor", "forensics", "vector-v2"]
+            ))
+        return violations
+
+    async def _analyze_dynamic_contrast(self, page: Page) -> List[Violation]:
+        """Cycle 6: Detect contrast issues in overlapping/layered elements."""
+        script = """() => {
+            const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4, h5, h6, a, button'));
+            const issues = [];
+            
+            elements.forEach(el => {
+                const style = window.getComputedStyle(el);
+                if (style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 0) {
+                    const rect = el.getBoundingClientRect();
+                    const siblings = Array.from(el.parentElement ? el.parentElement.children : []);
+                    siblings.forEach(sib => {
+                        if (sib !== el && sib.innerText && sib.innerText.trim().length > 0) {
+                            const sRect = sib.getBoundingClientRect();
+                            const overlaps = !(rect.right < sRect.left || rect.left > sRect.right || 
+                                             rect.bottom < sRect.top || rect.top > sRect.bottom);
+                            if (overlaps) {
+                                issues.push({
+                                    html: el.outerHTML.slice(0, 150),
+                                    selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                                    target: sib.tagName.toLowerCase() + (sib.id ? '#' + sib.id : '')
+                                });
+                            }
+                        }
+                    });
+                }
+            });
+            return issues;
+        }"""
+        raw_issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in raw_issues:
+            sel = str(issue.get('selector', 'element'))
+            tgt = str(issue.get('target', 'sibling'))
+            html = str(issue.get('html', ''))
+            violations.append(Violation(
+                rule_id="HEURISTIC-OVERLAP-601",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description=f"Potential contrast occlusion: Layered element '{sel}' overlaps text in '{tgt}'.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": f"Z-Index layering may occlude underlying text content in {tgt}."}],
+                tags=["auditor", "forensics", "vision-v2"]
+            ))
+        return violations
+
+    async def _analyze_aria_relationships(self, page: Page) -> List[Violation]:
+        """Cycle 2: Detect broken ARIA IDREFs (aria-owns, aria-controls, etc.)."""
+        script = """() => {
+            const attributes = ['aria-owns', 'aria-controls', 'aria-describedby', 'aria-labelledby'];
+            const broken = [];
+            attributes.forEach(attr => {
+                const elements = Array.from(document.querySelectorAll(`[${attr}]`));
+                elements.forEach(el => {
+                    const ids = el.getAttribute(attr).split(/\s+/);
+                    ids.forEach(id => {
+                        if (id && !document.getElementById(id)) {
+                            broken.push({
+                                html: el.outerHTML.slice(0, 200),
+                                attribute: attr,
+                                missing_id: id,
+                                selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+                            });
+                        }
+                    });
+                });
+            });
+            return broken;
+        }"""
+        broken_refs = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for ref in broken_refs:
+            attr = str(ref.get('attribute', ''))
+            missing = str(ref.get('missing_id', ''))
+            html = str(ref.get('html', ''))
+            sel = str(ref.get('selector', ''))
+            
+            violations.append(Violation(
+                rule_id="HEURISTIC-ARIA-REL-210",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description=f"Broken ARIA relationship: {attr} references non-existent ID '{missing}'.",
+                help_url="https://www.w3.org/WAI/ARIA/apg/practices/relationships/",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": f"Reference ID '{missing}' not found in DOM."}],
+                tags=["auditor", "heuristics", "aria-v3"]
+            ))
         return violations
 
     async def _analyze_target_size(self, page: Page) -> List[Violation]:
@@ -1174,7 +1605,47 @@ class PlaywrightEngine(IBrowserEngine):
         # Simulated throttling
         pass
 
-    # [ BLOCK: ENGINE CORE TEARDOWN ]
+    async def _analyze_focus_traps(self, page: Page) -> List[Violation]:
+        """Cycle 7: Detect keyboard focus traps using entropy analysis."""
+        self.logger.info("Initiating Focus-Trap Forensics [Rule 701]...")
+        
+        violations = []
+        focused_sequence = []
+        
+        try:
+            # 1. Reset focus
+            await page.keyboard.press("Escape")
+            await page.focus("body")
+            
+            # 2. Sequence Propagation
+            for _ in range(25):
+                await page.keyboard.press("Tab")
+                await asyncio.sleep(0.05)
+                active = await page.evaluate("document.activeElement.tagName + (document.activeElement.id ? '#' + document.activeElement.id : '')")
+                focused_sequence.append(active)
+            
+            # 3. Entropy Analysis (Repeating subsequences or single element stickiness)
+            if len(focused_sequence) > 10:
+                # Check for "stuck" (same element 10+ times)
+                counts = {x: focused_sequence.count(x) for x in set(focused_sequence)}
+                stuck_el = next((x for x, c in counts.items() if c > 10), None)
+                
+                if stuck_el:
+                    violations.append(Violation(
+                        rule_id="HEURISTIC-FOCUS-TRAP-701",
+                        session_id=self.session_id,
+                        impact=ImpactLevel.CRITICAL,
+                        description=f"Keyboard Focus Trap detected: Navigation locked on '{stuck_el}'.",
+                        help_url="https://www.w3.org/WAI/WCAG21/Understanding/no-keyboard-trap.html",
+                        selector=stuck_el,
+                        nodes=[{"html": "Interactive Loop Detected", "target": stuck_el, "failure_summary": "Keyboard focus cannot exit this element or container."}],
+                        tags=["auditor", "forensics", "navigation-v3"]
+                    ))
+        except Exception as e:
+            self.logger.error(f"Focus-Trap Forensic Anomaly: {e}")
+            
+        return violations
+
     async def _secure_teardown(self):
         """Wipes transient memory and closes browser clusters."""
         browser_inst = self.browser

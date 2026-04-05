@@ -52,8 +52,11 @@ class AuditService:
             "total_processed": 0,
             "total_violations_captured": 0,
             "failure_rate": 0.0,
-            "critical_anomalies": 0
+            "critical_anomalies": 0,
+            "consecutive_failures": 0,
+            "circuit_broken": False
         }
+        self.CIRCUIT_THRESHOLD = 5 # Trip after 5 consecutive failures
 
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
@@ -66,15 +69,49 @@ class AuditService:
         This method executes an end-to-end audit lifecycle with robust 
         error handling and persistence.
         """
-        # Session Initialization
-        session = AuditSession(target_url=url)
-        self.logger.info(f"--- [ AUDIT INITIATED ] ---")
-        self.logger.info(f"Target: {url} | ID: {session.id}")
+        # Cycle 7: Cognitive Session Reconstruction
+        is_resumed = False
+        try:
+            recent_sessions = await self.repository.list_recent_sessions(limit=20)
+            existing = next((s for s in recent_sessions if s.target_url == url and s.status in [SessionStatus.IN_PROGRESS, SessionStatus.FAILED]), None)
+            
+            if existing:
+                self.logger.info(f"RECONSTRUCTION: Resuming previously interrupted session {existing.id} for {url}")
+                session = existing
+                session.status = SessionStatus.IN_PROGRESS
+                session.updated_at = datetime.now()
+                is_resumed = True
+                await self.repository.save_session(session)
+            else:
+                session = AuditSession(target_url=url)
+                # No save yet, start() will be called below
+        except Exception as e:
+            self.logger.warning(f"Reconstruction Probe Failed: {e}. Falling back to clean session.")
+            session = AuditSession(target_url=url)
         
+        # Target Log
+        self.logger.info(f"Target: {url} | ID: {session.id} | Resumed: {is_resumed}")
+        
+        # Circuit Breaker Check
+        if self.metrics.get("circuit_broken"):
+            self.logger.critical(f"CIRCUIT BREAKER ACTIVE: Rejecting mission for {url}.")
+            session.fail("Circuit Breaker Tripped.")
+            return session
+
         try:
             # PHASE 1: INITIALIZATION
-            session.start()
+            if not is_resumed:
+                session.start()
+                await self.repository.save_session(session)
+            
             await self._session_reconciliation(session)
+            
+            # Cycle 4: Dynamic Batch Throttling
+            failure_count = self.metrics.get("consecutive_failures", 0)
+            if failure_count > 2:
+                dynamic_delay = min(15, failure_count * 2)
+                self.logger.warning(f"High Failure Rate Detected. Activating Dynamic Throttling: {dynamic_delay}s cooldown.")
+                await asyncio.sleep(dynamic_delay)
             
             # PHASE 2: BROWSER ENGINE DEPLOYMENT
             engine = PlaywrightEngine(session.id)
@@ -97,29 +134,51 @@ class AuditService:
                 # Update Session State
                 session.complete()
                 await self.repository.save_session(session)
+                
+                # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
+                try:
+                    remediation_plan = self._generate_remediation_plan(violations)
+                    export_path = f"reports/exports/remediation_{session.id}.md"
+                    os.makedirs(os.path.dirname(export_path), exist_ok=True)
+                    with open(export_path, "w", encoding="utf-8") as f:
+                        f.write(remediation_plan)
+                    self.logger.info(f"Remediation Patch-Set Exported: {export_path}")
+                except Exception as re:
+                    self.logger.warning(f"Remediation Hub v2 Failure: {re}")
+
                 self.metrics["total_processed"] += 1
                 self.metrics["total_violations_captured"] += len(violations)
+                self.metrics["consecutive_failures"] = 0 # RESET ON SUCCESS
                 
                 self.logger.info(f"Audit Success for {url}. Repository Updated.")
 
         except NavigationError as ne:
             self.logger.warning(f"Audit Warning: Target {url} is currently unreachable. Details: {ne}")
             session.fail(f"Navigation Failure: {str(ne)}")
-            self.metrics["failure_rate"] += 1
+            self._increment_failure()
         except AuditFailedError as afe:
-            self.logger.error(f"Audit Failure: Internal error during scan of {url}. Details: {afe}")
+            self.logger.error(f"Audit Failure: Internal error during scan of {url}. Details: {afe}", extra={"session_id": session.id})
             session.fail(f"Engine Error: {str(afe)}")
-            self.metrics["failure_rate"] += 1
+            self._increment_failure()
         except Exception as e:
-            self.logger.critical(f"FATAL SYSTEM ANOMALY: {e}", exc_info=True)
+            self.logger.critical(f"FATAL SYSTEM ANOMALY: {e}", exc_info=True, extra={"session_id": session.id})
             session.fail(f"Critical System Anomaly: {str(e)}")
             self.metrics["critical_anomalies"] += 1
+            self._increment_failure()
         finally:
             # PHASE 5: FINAL RECONCILIATION
             # Ensure the audit session state is ALWAYS preserved in the DB
             await self._session_reconciliation(session)
             
         return session
+
+    def _increment_failure(self):
+        """Internal logic for circuit breaker mechanics."""
+        self.metrics["failure_rate"] += 1
+        self.metrics["consecutive_failures"] += 1
+        if self.metrics["consecutive_failures"] >= self.CIRCUIT_THRESHOLD:
+            self.metrics["circuit_broken"] = True
+            self.logger.fatal(f"SYSTEM INTEGRITY COMPROMISED: Circuit Breaker TRIPPED after {self.CIRCUIT_THRESHOLD} failures.")
 
     # --------------------------------------------------------------------------
     # INTELLIGENCE OPERATIONS
@@ -172,7 +231,15 @@ class AuditService:
                 "duration_seconds": duration,
                 "summary": synthesis,
                 "remediation_plan": remediation,
-                "health_score": self._calculate_health_score(violations)
+                "health_score": self._calculate_health_score(violations),
+                # Cycle 5: High-Fidelity Forensic Metadata
+                "forensic_metadata": {
+                    "har_payload": f"reports/forensics/har/session_{session.id}.har",
+                    "focus_path_depth": len(session.focus_path or []),
+                    "aria_telemetry_events": len(session.aria_events or []),
+                    "stealth_profile": "QUANTUM-RESILIENT-Z10",
+                    "entropy_projection": "ACTIVE"
+                }
             }
         except Exception as e:
             self.logger.error(f"Report Generation Failed: {e}")
@@ -251,21 +318,48 @@ class AuditService:
 
         return "\n".join(plan)
 
-    def _calculate_proposed_code_fix(self, violation: Violation) -> str:
+    def _calculate_proposed_code_fix(self, violation: Violation, node: Dict[str, Any]) -> str:
         """
-        Algorithmic fix generation based on violation metadata.
+        Cycle 12: Forensic Remediation Synthesis - Generates surgical code patches.
         """
-        rule = str(violation.rule_id).lower()
-        selector = str(violation.selector)
+        rule = str(violation.rule_id).upper()
+        selector = str(node.get("target", "element"))
+        html = str(node.get("html", ""))
         
-        if "aria" in rule:
-            return f'<{selector} aria-label="DESCRIPTIVE_LABEL"> ... </{selector}>'
-        elif "color" in rule or "contrast" in rule:
-            return f'{selector} {{ color: #FFF; background: #000; }}'
-        elif "alt" in rule:
-            return f'<img src="..." alt="DESCRIPTIVE_TEXT" />'
+        # 1. HEURISTIC-TARGET-036 (Interactive Target Size)
+        if "TARGET-036" in rule:
+            return f'/* Proposed CSS Fix */\n{selector} {{\n  min-width: 44px;\n  min-height: 44px;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n}}'
+            
+        # 2. HEURISTIC-ALT-050 (Missing/Generic Alt Text)
+        if "ALT-050" in rule:
+            if "alt=" in html:
+                return html.replace('alt=""', 'alt="[DESCRIPTIVE_TEXT_HERE]"').replace("alt=''", "alt='[DESCRIPTIVE_TEXT_HERE]'")
+            return html.replace("<img ", '<img alt="[DESCRIPTIVE_TEXT_HERE]" ')
+            
+        # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
+        if "SVG-ACC-301" in rule:
+            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
+            
+        # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
+        if "ARIA-REL-210" in rule:
+            return f'<!-- Ensure internal references are valid -->\n{html.replace("aria-", "id=\"UNIQUE_ID\" aria-")}'
+            
+        # 5. HEURISTIC-HEAD-047 (Skipped Heading Level)
+        if "HEAD-047" in rule:
+            # Shift heading to maintain logical hierarchy
+            return f'<!-- Logical Heading Shift -->\n{html.replace("<h", "<!-- Suggest shift to appropriate level -->\n<h")}'
+            
+        # 6. Standard ARIA fixes
+        if "aria" in rule.lower():
+            if "aria-label" not in html:
+                return html.replace(">", ' aria-label="DESCRIPTIVE_LABEL">', 1)
+            return html
+            
+        # 7. Color Contrast
+        if "color" in rule.lower() or "contrast" in rule.lower():
+            return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
         
-        return "<!-- Manual review required -->"
+        return "<!-- Manual review required: No automated patch synthesized. -->"
 
     # --------------------------------------------------------------------------
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
@@ -655,6 +749,33 @@ class AuditService:
         self.logger.info(f"ENGINE-HOOK: Registered '{name}' at T+{time.time()}.")
 
     # [ BLOCK: COMPLIANCE MAPPER ]
+    def _generate_remediation_plan(self, violations: List[Violation]) -> str:
+        """Cycle 7/12: Remediation Hub v2 - Generates high-fidelity developer patch-sets."""
+        plan = "# Accessibility Remediation Patch-Set\n"
+        plan += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        plan += "Mission: Forensic Autonomy [Phase XII]\n\n"
+        
+        for v in violations:
+            plan += f"## {v.rule_id}: {v.description}\n"
+            plan += f"**Impact**: {v.impact.value.upper()}\n"
+            
+            for node in v.nodes:
+                html = node.get("html", "")
+                target = node.get("target", "")
+                
+                # Synthesis Engine: Prefer node-specific hints, then fallback to algorithmic generation
+                fix = node.get("suggested_fix")
+                if not fix or fix == "Consult WCAG documentation.":
+                    fix = self._calculate_proposed_code_fix(v, node)
+                
+                plan += f"### Target: `{target}`\n"
+                plan += "```html\n"
+                plan += f"<!-- [BEFORE] -->\n{html}\n\n"
+                plan += f"<!-- [AFTER - PROPOSED] -->\n{fix}\n"
+                plan += "```\n\n"
+        
+        return plan
+
     def _map_violations_to_global_standard(self, violations: List[Violation]) -> Dict[str, Any]:
         """Maps local violations to ISO/IEC 40500:2012 (WCAG 2.0)."""
         mapping = {}

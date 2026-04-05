@@ -113,17 +113,19 @@ class AuditReporter:
             </div>
             """ for v in data["violations"] if v["rule_id"] == "HEURISTIC-HEAD-047"])
 
-        # 5. Focus Path SVG Reconstruction (Phase VII)
+        # 5. Focus Path SVG Reconstruction (Phase VII/X)
         focus_svg = ""
         if data.get("focus_path"):
             path_points = []
             for i, p in enumerate(data["focus_path"]):
-                p_x, p_y = p.get('x', 0) / 2, p.get('y', 0) / 2 # Scaling for dashboard
+                p_x, p_y = p.get('x', 0), p.get('y', 0) 
                 path_points.append(f"{p_x},{p_y}")
-                focus_svg += f'<circle cx="{p_x}" cy="{p_y}" r="4" fill="var(--accent-primary)" />'
+                focus_svg += f'<circle cx="{p_x}" cy="{p_y}" r="8" fill="var(--accent-primary)" />'
                 if i > 0:
-                    prev_x, prev_y = data["focus_path"][i-1].get('x', 0)/2, data["focus_path"][i-1].get('y', 0)/2
-                    focus_svg += f'<line x1="{prev_x}" y1="{prev_y}" x2="{p_x}" y2="{p_y}" stroke="var(--accent-primary)" stroke-width="1" opacity="0.4" />'
+                    prev_x, prev_y = data["focus_path"][i-1].get('x', 0), data["focus_path"][i-1].get('y', 0)
+                    focus_svg += f'<line x1="{prev_x}" y1="{prev_y}" x2="{p_x}" y2="{p_y}" stroke="var(--accent-primary)" stroke-width="2" opacity="0.4" />'
+        else:
+            focus_svg = '<text x="50%" y="50%" text-anchor="middle" fill="var(--text-dim)" font-family="Inter">No navigation telemetry recorded.</text>'
             
         # 6. ARIA-Live Event Log (Phase VII)
         aria_html = "".join([f"""
@@ -320,8 +322,8 @@ class AuditReporter:
         <div class="visualization-container">
             <div class="forensic-box">
                 <h3 class="section-title" style="margin-top:0">Visual Focus Path</h3>
-                <svg class="svg-map" viewBox="0 0 1000 500">
-                    <rect width="100%" height="100%" fill="#050505" />
+                <svg class="svg-map" viewBox="0 0 1920 1080">
+                    <rect width="100%" height="100%" fill="#0a0a0f" />
                     {focus_svg}
                 </svg>
             </div>

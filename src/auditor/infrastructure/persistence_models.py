@@ -37,14 +37,15 @@ class AuditSessionModel(SQLModel, table=True):
 class ViolationModel(SQLModel, table=True):
     __tablename__ = "violations"
     
-    id: str = Field(primary_key=True)
-    session_id: UUID = Field(foreign_key="audit_sessions.id", primary_key=True)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    rule_id: str = Field(index=True)
+    session_id: UUID = Field(foreign_key="audit_sessions.id", index=True)
     impact: str
     description: str
     help_url: str
     selector: Optional[str] = None
-    nodes: Dict[str, Any] = Field(sa_column=Column(JSON))
-    tags: List[str] = Field(sa_column=Column(JSON))
+    nodes: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    tags: List[str] = Field(default=[], sa_column=Column(JSON))
     
     session: Optional[AuditSessionModel] = Relationship(back_populates="violations")
 
@@ -56,3 +57,6 @@ class TargetModel(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     last_audit_at: Optional[datetime] = None
     frequency_hours: Optional[Dict[str, Any]] = Field(sa_column=Column(JSON))
+
+
+# TaskModel moved to task_model.py to avoid metadata registration conflicts.

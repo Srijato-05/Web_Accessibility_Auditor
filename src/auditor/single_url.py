@@ -51,7 +51,7 @@ Options:
         service = AuditService(None, repository)
         
         try:
-            result = await service.execute_secure_audit(url)
+            result = await service.execute_audit(url)
             auditor_logger.info(f"Audit Session {result.id} COMPLETE. Status: {result.status.value}")
         except Exception as e:
             auditor_logger.critical(f"FATAL: Audit protocol aborted for {url}: {e}")

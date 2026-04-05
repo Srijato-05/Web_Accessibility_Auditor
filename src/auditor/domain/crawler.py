@@ -19,10 +19,19 @@ class LinkDiscoveryService:
         self.queue: List[str] = []
 
     def is_internal(self, base_url: str, target_url: str) -> bool:
-        """Verify if target_url belongs to the same domain as base_url."""
-        base_domain = urlparse(base_url).netloc
-        target_domain = urlparse(target_url).netloc
-        return base_domain == target_domain or not target_domain
+        """Verify if target_url belongs to the same domain as base_url (advanced matching)."""
+        base_netloc = urlparse(base_url).netloc.lower()
+        target_netloc = urlparse(target_url).netloc.lower()
+        
+        # Strip www. for canonical domain comparison
+        base_clean = base_netloc.replace("www.", "")
+        target_clean = target_netloc.replace("www.", "")
+        
+        if not target_netloc:
+            return True
+            
+        # Match if domains are identical after cleaning, or if target is a subdomain
+        return base_clean == target_clean or target_netloc.endswith(f".{base_clean}")
 
     def normalize_url(self, base_url: str, target_url: str) -> str:
         """Normalize target_url relative to base_url."""

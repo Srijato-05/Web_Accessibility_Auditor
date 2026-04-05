@@ -26,7 +26,7 @@ from auditor.domain.models import AuditTarget # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.domain.interfaces import IAuditRepository # type: ignore
 from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
-from auditor.domain.violation import Violation # type: ignore
+from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.domain.exceptions import RepositoryError # type: ignore
 
 class SqlAlchemyAuditRepository(IAuditRepository):
@@ -104,16 +104,16 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             async with self._lock:
                 for v in violations:
                     model = ViolationModel(
-                        id=v.rule_id,
+                        rule_id=v.rule_id,
                         session_id=v.session_id,
-                        impact=v.impact.value,
+                        impact=v.impact.value if isinstance(v.impact, ImpactLevel) else str(v.impact),
                         description=v.description,
                         help_url=v.help_url,
                         selector=v.selector,
                         nodes=v.nodes,
                         tags=v.tags
                     )
-                    await self.db_session.merge(model)
+                    self.db_session.add(model) # Use add instead of merge for new unique records
                 
                 await self.db_session.commit()
             self.logger.debug("Batch commit SUCCESS.")
@@ -144,9 +144,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                 )
                 session.violations = [
                     Violation(
-                        rule_id=v.id,
+                        rule_id=v.rule_id, # Use rule_id from DB
                         session_id=v.session_id,
-                        impact=v.impact, 
+                        impact=ImpactLevel(v.impact) if isinstance(v.impact, str) else v.impact, 
                         description=v.description,
                         help_url=v.help_url,
                         selector=v.selector,

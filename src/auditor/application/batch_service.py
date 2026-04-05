@@ -50,7 +50,7 @@ class BatchAuditManager:
         self.engine = engine
         self.logger = auditor_logger.getChild("BatchProcess")
         # Global concurrency control for domain-level parallelism
-        self.max_concurrent_domains: int = 3 
+        self.max_concurrent_domains: int = 5 
         self._semaphore = asyncio.Semaphore(self.max_concurrent_domains)
         
         # Global Telemetry
