@@ -38,6 +38,7 @@ from auditor.domain.exceptions import EngineError, AuditFailedError # type: igno
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.shared.stealth_profiles import StealthProfileGenerator # type: ignore
 from auditor.infrastructure.stealth_protocol import StealthProtocol # type: ignore
+from auditor.infrastructure.data_extractor import extract_page_data, PageData # type: ignore
 
 # --------------------------------------------------------------------------
 # ENGINE STEALTH CONFIGURATION: THE NEURAL GHOST
@@ -101,6 +102,7 @@ class PlaywrightEngine(IBrowserEngine):
         # Phase VII: Visual Intelligence Data
         self.focus_path: List[Dict[str, Any]] = []
         self.aria_events: List[Dict[str, Any]] = []
+        self.page_data: Optional[PageData] = None
         
         # Performance Telemetry Cluster
         self.telemetry: Dict[str, Any] = {
@@ -442,6 +444,17 @@ class PlaywrightEngine(IBrowserEngine):
                 except asyncio.TimeoutError:
                     self.logger.error(f"Engine Analytical Timeout [ZAP-V5]: Analysis at {url} exceeded 120s.")
                     axe_violations = []
+
+                # Cycle 14: Neural Data Extraction for Agents
+                try:
+                    self.logger.info("Executing Neural Data Extraction [ZET-X1]...")
+                    self.page_data = await extract_page_data(
+                        page, 
+                        self.session_id, 
+                        capture_screenshot=True
+                    )
+                except Exception as ee:
+                    self.logger.warning(f"Neural Extraction Failure [ZET-X1]: {ee}")
                 
                 # 4. Proprietary Forensic Clusters
                 # Skip forensics if main analysis timed out (prevents TargetClosedError race)

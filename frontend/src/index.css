@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-on-surface font-body antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading font-semibold text-on-surface tracking-tight;
+  }
+}
+
+@layer components {
+  .flat-panel {
+    @apply bg-surface border border-surface-border rounded-md shadow-flat;
+  }
+  
+  .primary-btn {
+    @apply bg-primary hover:bg-primary-hover text-on-primary 
+           rounded-md px-4 py-2 font-medium transition-colors duration-200
+           cursor-pointer shadow-flat;
+  }
+
+  .secondary-btn {
+    @apply bg-surface hover:bg-surface-highlight text-on-surface border border-surface-border
+           rounded-md px-4 py-2 font-medium transition-colors duration-200
+           cursor-pointer shadow-flat;
+  }
+}

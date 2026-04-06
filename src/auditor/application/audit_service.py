@@ -12,11 +12,7 @@ import time
 import os
 import sys
 from datetime import datetime
-<<<<<<< HEAD
 from typing import List, Dict, Any, Optional, Union, Annotated, cast
-=======
-from typing import List, Dict, Any, Optional, Annotated
->>>>>>> 9477f9d (Initial commit with TigerGraph integration)
 from uuid import UUID
 from rich.console import Console # type: ignore
 from rich.table import Table # type: ignore
@@ -34,6 +30,10 @@ from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
+from auditor.application.agents.controller import AgentController
+from auditor.application.agents.visual_agent import VisualAgent
+from auditor.application.agents.motor_agent import MotorAgent
+from auditor.application.agents.cognitive_agent import CognitiveAgent
 
 class AuditService:
     """
@@ -138,8 +138,30 @@ class AuditService:
             if hasattr(engine, 'aria_events'):
                 session.aria_events = getattr(engine, 'aria_events')
             
-            # PHASE 3: ANALYSIS & AGGREGATION
-            self.logger.info(f"Analysis Complete. Discovered {len(violations)} violations.")
+            # --- DISABILITY AGENTS INTEGRATION ---
+            if hasattr(engine, 'page_data') and engine.page_data:
+                try:
+                    self.logger.info("Engaging Specialized Accessibility Agents...")
+                    agents = [VisualAgent(), MotorAgent(), CognitiveAgent()]
+                    controller = AgentController(agents)
+                    agent_findings = await controller.analyze(engine.page_data)
+                    
+                    # Convert AgentFindings to standard Violation objects for unified reporting
+                    for af in agent_findings:
+                        v = Violation(
+                            rule_id=f"{af.agent.upper()}-{af.guideline}",
+                            impact=ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE,
+                            description=f"{af.issue} Fix: {af.fix}",
+                            help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}"
+                        )
+                        v.nodes = [{"target": [af.selector], "html": af.element}]
+                        v.selector = af.selector
+                        violations.append(v)
+                    
+                    self.logger.info(f"Agent analysis complete. Added {len(agent_findings)} specialized findings.")
+                except Exception as ae:
+                    self.logger.warning(f"Accessibility Agents Hub Failure: {ae}")
+            # -------------------------------------
 
             # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
             for v in violations:
@@ -372,8 +394,6 @@ class AuditService:
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
 
-<<<<<<< HEAD
-=======
     def generate_remediation_plan(self, violations: List[Violation]) -> str:
         """
         Generates a comprehensive remediation plan with code-level fixes.
@@ -388,7 +408,7 @@ class AuditService:
         # Priority Ranking
         sorted_violations = sorted(
             violations, 
-            key=lambda x: x.impact.value if x.impact else 99
+            key=lambda x: x.impact.value if (x.impact and hasattr(x.impact, 'value')) else 99
         )
 
         for i, v in enumerate(sorted_violations):
@@ -396,12 +416,15 @@ class AuditService:
                 plan.append(f"## ... and {len(violations) - 15} more violations.")
                 break
             
-            plan.append(f"## [{v.impact.name}] {v.rule_id}")
+            impact_name = v.impact.name if (v.impact and hasattr(v.impact, 'name')) else "UNKNOWN"
+            plan.append(f"## [{impact_name}] {v.rule_id}")
             plan.append(f"**Target Selector:** `{v.selector}`")
             plan.append(f"**Issue:** {v.description}")
             plan.append("**Proposed Technical Fix:**")
             
-            fix = self._calculate_proposed_code_fix(v)
+            # Use the first node for the proposed fix if available
+            node = v.nodes[0] if v.nodes else {}
+            fix = self._calculate_proposed_code_fix(v, node)
             plan.append(f"```html\n{fix}\n```")
             plan.append(f"**Reference Documentation:** [WCAG Technique]({v.help_url})")
             plan.append("")
@@ -450,8 +473,6 @@ class AuditService:
             return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
         
         return "<!-- Manual review required: No automated patch synthesized. -->"
-
->>>>>>> 9477f9d (Initial commit with TigerGraph integration)
     # --------------------------------------------------------------------------
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
