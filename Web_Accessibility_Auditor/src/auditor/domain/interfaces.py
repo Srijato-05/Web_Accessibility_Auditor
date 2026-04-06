@@ -1,14 +1,15 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import List, Protocol, runtime_checkable
+from typing import List, TYPE_CHECKING
 from uuid import UUID
 from auditor.domain.audit_session import AuditSession
 from auditor.domain.violation import Violation
 
-# --- [ NEW AGENT INFRASTRUCTURE ] ---
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from auditor.infrastructure.data_extractor import PageData
     from auditor.domain.agent_finding import AgentFinding
+    from auditor.infrastructure.data_extractor import PageData
+
 
 class IBrowserEngine(ABC):
     """Interface for the browser automation engine."""
@@ -16,15 +17,6 @@ class IBrowserEngine(ABC):
     async def scan_url(self, url: str) -> List[Violation]:
         pass
 
-@runtime_checkable
-class IAccessibilityAgent(Protocol):
-    """Interface for specialized accessibility analysis agents."""
-    @property
-    def agent_name(self) -> str:
-        ...
-
-    async def analyze(self, page_data: "PageData") -> List["AgentFinding"]:
-        ...
 
 class IAuditRepository(ABC):
     """Interface for persisting audit data."""
@@ -39,6 +31,22 @@ class IAuditRepository(ABC):
     @abstractmethod
     async def save_violations(self, violations: List[Violation]) -> None:
         pass
+
     @abstractmethod
     async def list_recent_sessions(self, limit: int) -> List[AuditSession]:
+        pass
+
+
+class IAccessibilityAgent(ABC):
+    """Interface for disability-specific accessibility agents."""
+
+    @property
+    @abstractmethod
+    def agent_name(self) -> str:
+        """Unique identifier for this agent (e.g. 'visual', 'motor')."""
+        pass
+
+    @abstractmethod
+    async def analyze(self, page_data: PageData) -> List[AgentFinding]:
+        """Analyze extracted page data and return structured findings."""
         pass

@@ -1,0 +1,17 @@
+{
+  "source_directories": [
+    "F:\\Projects\\Web Accesibility Auditor\\src",
+    "F:\\Projects\\Web Accesibility Auditor\\tmp"
+  ],
+  "exclude": [
+    ".*/\\.venv/.*",
+    ".*/tests/.*",
+    ".*/reports/.*"
+  ],
+  "search_path": [
+    "F:\\Projects\\Web Accesibility Auditor\\.venv\\Lib\\site-packages",
+    "F:\\Projects\\Web Accesibility Auditor\\src"
+  ]
+}
+
+

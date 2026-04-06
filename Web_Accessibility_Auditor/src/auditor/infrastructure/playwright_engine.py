@@ -18,11 +18,14 @@ import os
 import sys
 import asyncio
 import time
+import logging
 import random
+import json
 import math
-from typing import List, Any, Dict, Optional, Tuple, cast
+from typing import List, Any, Dict, Optional, Union, Tuple, Set, Annotated, cast
 from uuid import UUID
 from datetime import datetime
+from urllib.parse import urlparse
 
 # ENGINE PATH RECONCILIATION: Ensuring absolute import stability
 root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -34,11 +37,11 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from axe_playwright_python.async_playwright import Axe # type: ignore
 from auditor.domain.interfaces import IBrowserEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
-from auditor.domain.exceptions import EngineError, AuditFailedError # type: ignore
+from auditor.domain.exceptions import EngineError, NavigationError, AuditFailedError, DomainBlockedError # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.shared.stealth_profiles import StealthProfileGenerator # type: ignore
 from auditor.infrastructure.stealth_protocol import StealthProtocol # type: ignore
-from auditor.infrastructure.data_extractor import extract_page_data, PageData # type: ignore
 
 # --------------------------------------------------------------------------
 # ENGINE STEALTH CONFIGURATION: THE NEURAL GHOST
@@ -91,18 +94,17 @@ class PlaywrightEngine(IBrowserEngine):
         telemetry (Dict): real-time performance and audit metadata.
     """
     
-    def __init__(self, session_id: UUID, headless: bool = True):
+    def __init__(self, session_id: UUID, headless: bool = True, pre_close_hook=None):
         self.session_id = session_id
         self.headless = headless
-        self.playwright_mgr: Optional[Any] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self._page_count = 0
+        self.pre_close_hook = pre_close_hook
         
         # Phase VII: Visual Intelligence Data
         self.focus_path: List[Dict[str, Any]] = []
         self.aria_events: List[Dict[str, Any]] = []
-        self.page_data: Optional[PageData] = None
         
         # Performance Telemetry Cluster
         self.telemetry: Dict[str, Any] = {
@@ -128,33 +130,6 @@ class PlaywrightEngine(IBrowserEngine):
     # --------------------------------------------------------------------------
     # CORE LIFECYCLE: THE BROWSER CLUSTER
     # --------------------------------------------------------------------------
-
-    async def start(self):
-        """Initializes the persistent playwright and browser instance."""
-        if not self.browser:
-            self.logger.info("Starting Persistent Engine Cluster...")
-            self.playwright_mgr = await async_playwright().start()
-            await self._init_browser(self.playwright_mgr)
-
-    async def teardown(self):
-        """Gracefully terminates the engine cluster and releases hardware handles."""
-        self.logger.info("Commencing Engine Teardown Protocol...")
-        ctx = self.context
-        if ctx:
-            try: await ctx.close()
-            except: pass
-        br = self.browser
-        if br:
-            try: await br.close()
-            except: pass
-        mgr = self.playwright_mgr
-        if mgr:
-            try: await mgr.stop()
-            except: pass
-        self.browser = None
-        self.context = None
-        self.playwright_mgr = None
-        self.logger.info("Engine Cluster OFFLINE.")
 
     async def _init_browser(self, playwright: Any):
         """
@@ -393,27 +368,15 @@ class PlaywrightEngine(IBrowserEngine):
         """
         self.telemetry["start_time"] = datetime.now()
         
-        # Ensure engine is active
-        if not self.browser:
-            await self.start()
+        async with async_playwright() as playwright:
+            await self._init_browser(playwright)
             
-        br = self.browser
-        if not br:
-            raise EngineError("Engine Cluster Failure: Browser offline.")
-            
-        try:
-            local_context = await br.new_context(
-                viewport=self.profile['viewport'],
-                user_agent=self.profile['userAgent'],
-                java_script_enabled=True,
-                bypass_csp=True
-            )
-            # Re-inject stealth for this context
-            stealth_js = StealthProtocol.get_injection_script(self.profile)
-            await local_context.add_init_script(stealth_js)
-            await self._inject_zenith_stealth(local_context, self.profile)
-            
-            page = await local_context.new_page()
+            # Ensuring non-null context
+            context_inst = self.context
+            if not context_inst:
+                raise EngineError("Engine Context NULL: Browser initialization failed.")
+
+            page = await context_inst.new_page()
             try:
                 # 1. Smart Timeout Adaptation
                 timeout = await self._get_dynamic_timeout(page, url)
@@ -444,17 +407,6 @@ class PlaywrightEngine(IBrowserEngine):
                 except asyncio.TimeoutError:
                     self.logger.error(f"Engine Analytical Timeout [ZAP-V5]: Analysis at {url} exceeded 120s.")
                     axe_violations = []
-
-                # Cycle 14: Neural Data Extraction for Agents
-                try:
-                    self.logger.info("Executing Neural Data Extraction [ZET-X1]...")
-                    self.page_data = await extract_page_data(
-                        page, 
-                        self.session_id, 
-                        capture_screenshot=True
-                    )
-                except Exception as ee:
-                    self.logger.warning(f"Neural Extraction Failure [ZET-X1]: {ee}")
                 
                 # 4. Proprietary Forensic Clusters
                 # Skip forensics if main analysis timed out (prevents TargetClosedError race)
@@ -464,13 +416,21 @@ class PlaywrightEngine(IBrowserEngine):
                     # Actually, let's just try forensics if it didn't timeout
                     pass
                 
-                if isinstance(axe_violations, list):
-                    try:
-                        custom_v = await self._run_proprietary_heuristics(page)
-                    except Exception as he:
-                        self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
+                if 'axe_violations' in locals() and (axe_violations or (isinstance(axe_violations, list))):
+                 try:
+                    custom_v = await self._run_proprietary_heuristics(page)
+                 except Exception as he:
+                    self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
                 
-                # 5. Synthesis & Telemetry
+                # 5. Agentic Pre-Close Hook (runs while page is still open)
+                if self.pre_close_hook and not page.is_closed():
+                    try:
+                        self.logger.info("Executing agentic pre-close hook...")
+                        await self.pre_close_hook(page)
+                    except Exception as hook_err:
+                        self.logger.warning(f"Pre-close hook failure: {hook_err}")
+
+                # 6. Synthesis & Telemetry
                 all_violations = axe_violations + custom_v
                 duration = time.time() - start_time
                 self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations)} | T+{duration:.2f}s")
@@ -494,14 +454,16 @@ class PlaywrightEngine(IBrowserEngine):
                         if not page.is_closed():
                             await page.close()
                     except: pass
-                if local_context:
+                if self.context:
                     try:
-                        await local_context.close()
+                        await self.context.close()
                     except Exception:
                         pass
-        except Exception as outer_e:
-            self.logger.error(f"Global Protocol Error: {outer_e}")
-            raise AuditFailedError(f"Global audit failure: {outer_e}")
+                if self.browser:
+                    try:
+                        await self.browser.close() # type: ignore
+                    except Exception:
+                        pass
         
         return [] # Final Path Safety
 
@@ -599,7 +561,7 @@ class PlaywrightEngine(IBrowserEngine):
             
             # Selection count based on density
             hover_count = min(len(targets), random.randint(2, 5))
-            sample = random.sample(cast(List[Any], targets), hover_count)
+            sample = random.sample(targets, hover_count)
             
             self.logger.debug(f"Simulating {hover_count} investigative hovers...")
             for el in sample:
@@ -626,14 +588,14 @@ class PlaywrightEngine(IBrowserEngine):
             # Heuristic 1: Semantic Skeleton Analysis (including Shadow Roots)
             all_scopes = await self._find_all_render_contexts(page)
             for scope_id, selector in all_scopes:
-                semantic_score = await page.evaluate("(sel) => { \
+                semantic_score = await page.evaluate(f"(sel) => {{ \
                     const root = sel === 'document' ? document : document.querySelector(sel).shadowRoot; \
                     let score = 0; \
                     if(root.querySelector('header')) score += 0.2; \
                     if(root.querySelector('main')) score += 0.5; \
                     if(root.querySelector('footer')) score += 0.3; \
                     return score; \
-                }", selector)
+                }}", selector)
                 
                 if semantic_score < 0.7:
                     self.logger.warning(f"Engine Detection: Low Semantic Integrity Signature ({semantic_score}) in {selector}")
@@ -829,47 +791,26 @@ class PlaywrightEngine(IBrowserEngine):
             const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4, h5, h6, a, button'));
             const issues = [];
             
-            // Phase VII: Optimized Occlusion Analysis
-            // We only care about elements that are likely to float over something (absolute/fixed)
-            const floatingElements = elements.filter(el => {
+            elements.forEach(el => {
                 const style = window.getComputedStyle(el);
-                return style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 50;
-            });
-            
-            if (floatingElements.length > 50) {
-                // Critical Performance Guard for massive DOMs (like Wikipedia)
-                // Limit analysis to the first 50 floating elements to prevent browser-hang
-                floatingElements.length = 50;
-            }
-
-            floatingElements.forEach(el => {
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) return;
-                
-                // Instead of O(N^2) check against ALL siblings, we use elementFromPoint
-                // at the four corners and center to detect underlying text-bearing nodes
-                const points = [
-                    {x: rect.left + 5, y: rect.top + 5},
-                    {x: rect.right - 5, y: rect.top + 5},
-                    {x: rect.left + 5, y: rect.bottom - 5},
-                    {x: rect.right - 5, y: rect.bottom - 5},
-                    {x: rect.left + rect.width/2, y: rect.top + rect.height/2}
-                ];
-                
-                points.forEach(p => {
-                    if (p.x < 0 || p.y < 0) return;
-                    el.style.pointerEvents = 'none'; // Temporarily pass-through
-                    const under = document.elementFromPoint(p.x, p.y);
-                    el.style.pointerEvents = ''; // Restore
-                    
-                    if (under && under !== el && under.innerText && under.innerText.trim().length > 0) {
-                         issues.push({
-                            html: el.outerHTML.slice(0, 150),
-                            selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
-                            target: under.tagName.toLowerCase() + (under.id ? '#' + under.id : '')
-                        });
-                    }
-                });
+                if (style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 0) {
+                    const rect = el.getBoundingClientRect();
+                    const siblings = Array.from(el.parentElement ? el.parentElement.children : []);
+                    siblings.forEach(sib => {
+                        if (sib !== el && sib.innerText && sib.innerText.trim().length > 0) {
+                            const sRect = sib.getBoundingClientRect();
+                            const overlaps = !(rect.right < sRect.left || rect.left > sRect.right || 
+                                             rect.bottom < sRect.top || rect.top > sRect.bottom);
+                            if (overlaps) {
+                                issues.push({
+                                    html: el.outerHTML.slice(0, 150),
+                                    selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                                    target: sib.tagName.toLowerCase() + (sib.id ? '#' + sib.id : '')
+                                });
+                            }
+                        }
+                    });
+                }
             });
             return issues;
         }"""
@@ -937,20 +878,14 @@ class PlaywrightEngine(IBrowserEngine):
     async def _analyze_target_size(self, page: Page) -> List[Violation]:
         """Item 36: Detect interactive elements < 44x44px."""
         script = """() => {
-            const allTargets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
-            // Optimization: Limit analysis to first 200 interactive elements to prevent layout thrashing
-            const targets = allTargets.filter(t => {
-                const style = window.getComputedStyle(t);
-                return style.display !== 'none' && style.visibility !== 'hidden';
-            }).slice(0, 200);
-
+            const targets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
             return targets.map(t => {
                 const rect = t.getBoundingClientRect();
                 return { 
                     html: t.outerHTML.slice(0, 200), 
                     width: rect.width, 
                     height: rect.height, 
-                    selector: t.tagName.toLowerCase() + (t.id ? '#' + t.id : '')
+                    selector: t.tagName.toLowerCase() 
                 };
             }).filter(t => t.width > 0 && (t.width < 44 || t.height < 44));
         }"""
@@ -977,13 +912,13 @@ class PlaywrightEngine(IBrowserEngine):
     async def _analyze_alt_text_quality(self, page: Page) -> List[Violation]:
         """Item 50: Flag generic/redundant alt descriptions."""
         generic_terms = ["image", "img", "photo", "pic", "graphic", "icon", "logo", "drawing", "picture"]
-        script = """() => {
+        script = f"""() => {{
             const images = Array.from(document.querySelectorAll('img[alt]'));
-            return images.map(img => ({
+            return images.map(img => ({{
                 html: img.outerHTML.slice(0, 200),
                 alt: img.alt.toLowerCase().trim()
-            }));
-        }"""
+            }}));
+        }}"""
         img_data = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
         for img in img_data:
@@ -1049,9 +984,13 @@ class PlaywrightEngine(IBrowserEngine):
         contexts = [("document", "document")]
         try:
             shadow_hosts = await page.evaluate("() => { \
-                return Array.from(document.querySelectorAll('*')) \
-                    .filter(el => el.shadowRoot) \
-                    .map(h => h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')); \
+                const hosts = []; \
+                const walk = (node) => { \
+                    if (node.shadowRoot) hosts.push(node); \
+                    node.querySelectorAll('*').forEach(walk); \
+                }; \
+                walk(document.body); \
+                return hosts.map(h => h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')); \
             }")
             for host_selector in shadow_hosts:
                 contexts.append(("shadow-root", host_selector))

@@ -11,8 +11,10 @@ Responsibilities:
 """
 
 import asyncio
+import json
 import os
 import sys
+import logging
 from typing import Dict, Any, Optional
 from uuid import uuid4
 
@@ -100,7 +102,7 @@ class AuditWorker:
         async with AsyncSession(self.engine) as db_session:
             # 1. Initialize Infrastructure Components
             repo = SqlAlchemyAuditRepository(db_session)
-            browser = PlaywrightEngine(uuid4()) # Added missing session id
+            browser = PlaywrightEngine()
             crawler = PlaywrightLinkExtractor()
             
             # 2. Assemble Service Layer
@@ -118,17 +120,10 @@ class AuditWorker:
             # 3. Execution
             try:
                 self.logger.info(f"--- [ STARTING DISTRIBUTED AUDIT: {url} ] ---")
-                await browser.start() # Optimize: Start once for site-wide crawl
-                await crawl_orchestrator.run(url)
+                await crawl_orchestrator.process_audit_session(url)
                 self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
             except Exception as e:
                 self.logger.error(f"Distributed Audit Failure [{url}]: {e}")
-            finally:
-                if browser:
-                    await browser.teardown()
-                if crawler:
-                    try: await crawler.teardown()
-                    except: pass
 
     async def _run_single_audit(self, url: str):
         """Executes a surgical audit for a single page with persistence isolation."""
@@ -152,7 +147,7 @@ class AuditWorker:
             finally:
                 # Cleanup browser cluster
                 if browser:
-                    await browser.teardown()
+                    await browser._secure_teardown()
 
 if __name__ == "__main__":
     worker = AuditWorker()

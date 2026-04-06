@@ -8,15 +8,13 @@ accessibility violations.
 """
 
 import asyncio
+import logging
 import time
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union, Annotated, cast
+from typing import List, Dict, Any, Optional, Union, Annotated
 from uuid import UUID
-from rich.console import Console # type: ignore
-from rich.table import Table # type: ignore
-from rich.panel import Panel # type: ignore
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -28,12 +26,17 @@ from auditor.domain.interfaces import IBrowserEngine, IAuditRepository # type: i
 from auditor.domain.exceptions import AuditFailedError, NavigationError, RepositoryError, BatchError # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
+from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
-from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
-from auditor.application.agents.controller import AgentController
-from auditor.application.agents.visual_agent import VisualAgent
-from auditor.application.agents.motor_agent import MotorAgent
-from auditor.application.agents.cognitive_agent import CognitiveAgent
+
+# Agentic Accessibility Engine
+from auditor.infrastructure.data_extractor import extract_page_data, PageData # type: ignore
+from auditor.application.agents.controller import AgentController # type: ignore
+from auditor.application.agents.visual_agent import VisualAgent # type: ignore
+from auditor.application.agents.motor_agent import MotorAgent # type: ignore
+from auditor.application.agents.cognitive_agent import CognitiveAgent # type: ignore
+from auditor.application.agents.neural_agent import NeuralAgent # type: ignore
+from auditor.domain.agent_finding import AgentFinding # type: ignore
 
 class AuditService:
     """
@@ -41,15 +44,16 @@ class AuditService:
     
     This service manages the transformation of raw target URLs into 
     structured accessibility reports.
-
+    
     Attributes:
         repository (IAuditRepository): The persistent storage layer for audit data.
         engine (Optional[IBrowserEngine]): The browser automation engine.
     """
     
-    def __init__(self, engine: Optional[IBrowserEngine], repository: IAuditRepository):
+    def __init__(self, engine: Optional[IBrowserEngine], repository: IAuditRepository, reports_dir: Optional[str] = None):
         self.repository = repository
         self.engine = engine
+        self.reports_dir = reports_dir
         self._lock = asyncio.Lock()
         self.logger = auditor_logger.getChild("EngineAuditController")
         
@@ -63,9 +67,6 @@ class AuditService:
             "circuit_broken": False
         }
         self.CIRCUIT_THRESHOLD = 5 # Trip after 5 consecutive failures
-
-        # --- TEAM ANTIGRAVITY ---
-        self.tg_repo = TigerGraphRepository()
 
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
@@ -123,54 +124,55 @@ class AuditService:
                 await asyncio.sleep(dynamic_delay)
             
             # PHASE 2: BROWSER ENGINE DEPLOYMENT
-            # Use injected engine if available, otherwise provision local mission engine
-            engine = self.engine if self.engine else PlaywrightEngine(session.id)
-            
-            if not engine:
-                raise AuditFailedError("Failed to provision browser engine.")
+            # Agentic hook: extract page data while browser is still open
+            agent_findings: List[AgentFinding] = []
 
+            async def _agentic_hook(page):
+                nonlocal agent_findings
+                try:
+                    page_data = await extract_page_data(page, session.id)
+                    controller = AgentController([
+                        VisualAgent(),
+                        MotorAgent(),
+                        CognitiveAgent(),
+                        NeuralAgent(),
+                    ])
+                    agent_findings = await controller.analyze(page_data)
+                    self.logger.info(
+                        f"Agentic analysis complete: {len(agent_findings)} findings"
+                    )
+                    # Export findings as standalone JSON report
+                    if agent_findings:
+                        export_kwargs = {"target_url": url}
+                        if self.reports_dir:
+                            export_kwargs["output_dir"] = os.path.join(self.reports_dir, "exports")
+                        
+                        controller.export_findings(
+                            agent_findings, str(session.id), **export_kwargs
+                        )
+                except Exception as ae:
+                    self.logger.warning(f"Agentic pipeline error: {ae}")
+
+            # Use injected engine if available, otherwise provision local mission engine
+            if self.engine:
+                engine = self.engine
+                engine.pre_close_hook = _agentic_hook
+            else:
+                engine = PlaywrightEngine(session.id, pre_close_hook=_agentic_hook)
+            
             self.logger.info("Starting analysis via browser engine...")
             violations = await engine.scan_url(url)
             
             # PHASE VII: FORENSIC TELEMETRY EXTRACTION
-            if hasattr(engine, 'focus_path'):
-                session.focus_path = getattr(engine, 'focus_path')
-            if hasattr(engine, 'aria_events'):
-                session.aria_events = getattr(engine, 'aria_events')
+            session.focus_path = engine.focus_path
+            session.aria_events = engine.aria_events
             
-            # --- DISABILITY AGENTS INTEGRATION ---
-            if hasattr(engine, 'page_data') and engine.page_data:
-                try:
-                    self.logger.info("Engaging Specialized Accessibility Agents...")
-                    agents = [VisualAgent(), MotorAgent(), CognitiveAgent()]
-                    controller = AgentController(agents)
-                    agent_findings = await controller.analyze(engine.page_data)
-                    
-                    # Convert AgentFindings to standard Violation objects for unified reporting
-                    for af in agent_findings:
-                        v = Violation(
-                            rule_id=f"{af.agent.upper()}-{af.guideline}",
-                            impact=ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE,
-                            description=f"{af.issue} Fix: {af.fix}",
-                            help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}"
-                        )
-                        v.nodes = [{"target": [af.selector], "html": af.element}]
-                        v.selector = af.selector
-                        violations.append(v)
-                    
-                    self.logger.info(f"Agent analysis complete. Added {len(agent_findings)} specialized findings.")
-                except Exception as ae:
-                    self.logger.warning(f"Accessibility Agents Hub Failure: {ae}")
-            # -------------------------------------
-
-            # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
-            for v in violations:
-                for node in v.nodes:
-                    html_snippet = str(node.get("html", ""))
-                    if html_snippet:
-                        await self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
-            # -------------------------------------
-
+            # PHASE 3: ANALYSIS & AGGREGATION
+            self.logger.info(
+                f"Analysis Complete. Discovered {len(violations)} violations "
+                f"+ {len(agent_findings)} agent findings."
+            )
+            
             # PHASE 4: PERSISTENCE
             async with self._lock:
                 self.logger.debug(f"Committing {len(violations)} records to the repository...")
@@ -182,7 +184,7 @@ class AuditService:
                 
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
                 try:
-                    remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations))
+                    remediation_plan = self._generate_remediation_plan(violations)
                     export_path = f"reports/exports/remediation_{session.id}.md"
                     os.makedirs(os.path.dirname(export_path), exist_ok=True)
                     with open(export_path, "w", encoding="utf-8") as f:
@@ -195,8 +197,6 @@ class AuditService:
                 self.metrics["total_violations_captured"] += len(violations)
                 self.metrics["consecutive_failures"] = 0 # RESET ON SUCCESS
                 
-                # High-Fidelity Terminal Dashboard Dispatch
-                self._display_terminal_summary(cast(List[Violation], violations), session)
                 self.logger.info(f"Audit Success for {url}. Repository Updated.")
 
         except NavigationError as ne:
@@ -244,69 +244,6 @@ class AuditService:
                 await asyncio.sleep(0.5 * (attempt + 1))
         
         self.logger.error(f"CRITICAL: Failed to save session {session.id} after {max_retries} attempts.")
-
-    def _display_terminal_summary(self, violations: List[Violation], session: AuditSession):
-        """Displays a clinical-grade summary of findings in the terminal."""
-        console = Console()
-        
-        # 1. Mission Header
-        status_color = "green" if session.status == SessionStatus.COMPLETED else "red"
-        console.print("\n")
-        console.print(Panel(
-            f"[bold white]SITE MISSION COMPLETE[/]\n"
-            f"[dim]URL:[/] [cyan]{session.target_url}[/]\n"
-            f"[dim]ID:[/]  [magenta]{session.id}[/]\n"
-            f"[dim]STATUS:[/] [{status_color}]{session.status.value.upper()}[/]",
-            title="[bold blue]AUDITOR.NEXT[/]",
-            expand=False
-        ))
-
-        # 2. Impact Breakdown Table
-        impact_counts = {
-            ImpactLevel.CRITICAL: 0,
-            ImpactLevel.SERIOUS: 0,
-            ImpactLevel.MODERATE: 0,
-            ImpactLevel.MINOR: 0
-        }
-        for v in violations:
-            impact_counts[v.impact] += 1
-
-        table = Table(title="Violation Inventory Matrix", show_header=True, header_style="bold magenta")
-        table.add_column("Impact", style="dim", width=12)
-        table.add_column("Rule ID", style="cyan")
-        table.add_column("Count", justify="right")
-        table.add_column("Status", justify="center")
-
-        impact_styles = {
-            ImpactLevel.CRITICAL: "bold red",
-            ImpactLevel.SERIOUS: "orange3",
-            ImpactLevel.MODERATE: "yellow",
-            ImpactLevel.MINOR: "green"
-        }
-
-        # Sub-Aggregation for the table display
-        rule_agg = {}
-        for v in violations:
-            key = (v.impact, v.rule_id)
-            rule_agg[key] = rule_agg.get(key, 0) + 1
-
-        for (impact, rule_id), count in sorted(rule_agg.items(), key=lambda x: x[0].value):
-            style = impact_styles.get(impact, "white")
-            table.add_row(
-                f"[{style}]{impact.name}[/]",
-                rule_id,
-                str(count),
-                "FAIL" if impact in [ImpactLevel.CRITICAL, ImpactLevel.SERIOUS] else "WARN"
-            )
-
-        console.print(table)
-
-        # 3. Health Score & Remediation Path
-        score = self._calculate_health_score(violations)
-        score_color = "green" if score > 80 else "yellow" if score > 50 else "red"
-        
-        console.print(f"\n[bold]MISSION HEALTH SCORE:[/] [{score_color}]{score}%[/]")
-        console.print(f"[dim]Remediation Patch-Set:[/] [cyan]reports/exports/remediation_{session.id}.md[/]\n")
 
     # --------------------------------------------------------------------------
     # ENGINE ANALYTICS LAYER
@@ -391,7 +328,7 @@ class AuditService:
         return float(f"{score_val:.2f}")
 
     # --------------------------------------------------------------------------
-    # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
+    # ENGINE REMEDIATION: AUTOMATED CODE FIX GENERATION
     # --------------------------------------------------------------------------
 
     def generate_remediation_plan(self, violations: List[Violation]) -> str:
@@ -408,7 +345,7 @@ class AuditService:
         # Priority Ranking
         sorted_violations = sorted(
             violations, 
-            key=lambda x: x.impact.value if (x.impact and hasattr(x.impact, 'value')) else 99
+            key=lambda x: x.impact.value if x.impact else 99
         )
 
         for i, v in enumerate(sorted_violations):
@@ -416,15 +353,12 @@ class AuditService:
                 plan.append(f"## ... and {len(violations) - 15} more violations.")
                 break
             
-            impact_name = v.impact.name if (v.impact and hasattr(v.impact, 'name')) else "UNKNOWN"
-            plan.append(f"## [{impact_name}] {v.rule_id}")
+            plan.append(f"## [{v.impact.name}] {v.rule_id}")
             plan.append(f"**Target Selector:** `{v.selector}`")
             plan.append(f"**Issue:** {v.description}")
             plan.append("**Proposed Technical Fix:**")
             
-            # Use the first node for the proposed fix if available
-            node = v.nodes[0] if v.nodes else {}
-            fix = self._calculate_proposed_code_fix(v, node)
+            fix = self._calculate_proposed_code_fix(v)
             plan.append(f"```html\n{fix}\n```")
             plan.append(f"**Reference Documentation:** [WCAG Technique]({v.help_url})")
             plan.append("")
@@ -451,7 +385,7 @@ class AuditService:
             
         # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
         if "SVG-ACC-301" in rule:
-            return '<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
+            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
             
         # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
         if "ARIA-REL-210" in rule:
@@ -473,6 +407,7 @@ class AuditService:
             return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
         
         return "<!-- Manual review required: No automated patch synthesized. -->"
+
     # --------------------------------------------------------------------------
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
@@ -551,7 +486,7 @@ class AuditService:
             await asyncio.sleep(0.5) 
             
             # Atomic commit to redundant cold-ledger
-            self.logger.info("Redundant persistence synchronized via Secondary-Alpha-Sync.")
+            self.logger.info(f"Redundant persistence synchronized via Secondary-Alpha-Sync.")
             return True
         except Exception as fe:
             self.logger.fatal(f"ENGINE CATASTROPHIC PERSISTENCE LOSS: Failover driver unreachable: {fe}")
@@ -621,7 +556,7 @@ class AuditService:
         """
         atlas = [
             "# VANGUARD NATIONAL COMPLIANCE ATLAS (Z10-NCA)",
-            "Sector Authority: National Digital Intelligence Unit",
+            f"Sector Authority: National Digital Intelligence Unit",
             f"Generation Date: {datetime.now().isoformat()}",
             "---",
             ""
@@ -852,51 +787,16 @@ class AuditService:
         # Ensure error prevention for dosage and patient identity inputs
         return violations
 
-    def _calculate_proposed_code_fix(self, violation: Violation, node: Dict[str, Any]) -> str:
-        """
-        Cycle 12: Forensic Remediation Synthesis - Generates surgical code patches.
-        """
-        rule = str(violation.rule_id).upper()
-        selector = str(node.get("target", "element"))
-        html = str(node.get("html", ""))
-        
-        # 1. HEURISTIC-TARGET-036 (Interactive Target Size)
-        if "TARGET-036" in rule:
-            return f'/* Proposed CSS Fix */\n{selector} {{\n  min-width: 44px;\n  min-height: 44px;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n}}'
-            
-        # 2. HEURISTIC-ALT-050 (Missing/Generic Alt Text)
-        if "ALT-050" in rule:
-            if "alt=" in html:
-                return html.replace('alt=""', 'alt="[DESCRIPTIVE_TEXT_HERE]"').replace("alt=''", "alt='[DESCRIPTIVE_TEXT_HERE]'")
-            return html.replace("<img ", '<img alt="[DESCRIPTIVE_TEXT_HERE]" ')
-            
-        # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
-        if "SVG-ACC-301" in rule:
-            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
-            
-        # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
-        if "ARIA-REL-210" in rule:
-            return f'<!-- Ensure internal references are valid -->\n{html.replace("aria-", "id=\"UNIQUE_ID\" aria-")}'
-            
-        # 5. HEURISTIC-HEAD-047 (Skipped Heading Level)
-        if "HEAD-047" in rule:
-            # Shift heading to maintain logical hierarchy
-            return f'<!-- Logical Heading Shift -->\n{html.replace("<h", "<!-- Suggest shift to appropriate level -->\n<h")}'
-            
-        # 6. Standard ARIA fixes
-        if "aria" in rule.lower():
-            if "aria-label" not in html:
-                return html.replace(">", ' aria-label="DESCRIPTIVE_LABEL">', 1)
-            return html
-            
-        # 7. Color Contrast
-        if "color" in rule.lower() or "contrast" in rule.lower():
-            return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
-        
-        return "<!-- Manual review required: No automated patch synthesized. -->"
+    # --------------------------------------------------------------------------
+    # ENGINE CORE: DEEP ARCHITECTURAL REGISTRY
+    # --------------------------------------------------------------------------
+
+    def register_zenith_hook(self, name: str, callback: Annotated[Any, "EngineHook"]):
+        """Registers an asynchronous diagnostic hook into the Engine Core."""
+        self.logger.info(f"ENGINE-HOOK: Registered '{name}' at T+{time.time()}.")
 
     # [ BLOCK: COMPLIANCE MAPPER ]
-    def generate_remediation_plan(self, violations: List[Violation]) -> str:
+    def _generate_remediation_plan(self, violations: List[Violation]) -> str:
         """Cycle 7/12: Remediation Hub v2 - Generates high-fidelity developer patch-sets."""
         plan = "# Accessibility Remediation Patch-Set\n"
         plan += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -913,7 +813,7 @@ class AuditService:
                 # Synthesis Engine: Prefer node-specific hints, then fallback to algorithmic generation
                 fix = node.get("suggested_fix")
                 if not fix or fix == "Consult WCAG documentation.":
-                    fix = AuditService._calculate_proposed_code_fix(self, v, node)
+                    fix = self._calculate_proposed_code_fix(v, node)
                 
                 plan += f"### Target: `{target}`\n"
                 plan += "```html\n"
@@ -997,7 +897,7 @@ class AuditService:
             blueprint.append(f"**Selector**: `{v.selector}`")
             blueprint.append("**Proposed Fix**:")
             blueprint.append("```css")
-            blueprint.append("/* Engine-Generated CSS Patch */")
+            blueprint.append(f"/* Engine-Generated CSS Patch */")
             blueprint.append(f"{v.selector} {{ outline: 2px solid #FF0000; }}")
             blueprint.append("```")
             blueprint.append("---")
