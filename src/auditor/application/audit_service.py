@@ -8,12 +8,15 @@ accessibility violations.
 """
 
 import asyncio
-import logging
 import time
 import os
 import sys
 from datetime import datetime
+<<<<<<< HEAD
 from typing import List, Dict, Any, Optional, Union, Annotated, cast
+=======
+from typing import List, Dict, Any, Optional, Annotated
+>>>>>>> 9477f9d (Initial commit with TigerGraph integration)
 from uuid import UUID
 from rich.console import Console # type: ignore
 from rich.table import Table # type: ignore
@@ -29,8 +32,8 @@ from auditor.domain.interfaces import IBrowserEngine, IAuditRepository # type: i
 from auditor.domain.exceptions import AuditFailedError, NavigationError, RepositoryError, BatchError # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
-from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
+from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
 
 class AuditService:
     """
@@ -60,6 +63,9 @@ class AuditService:
             "circuit_broken": False
         }
         self.CIRCUIT_THRESHOLD = 5 # Trip after 5 consecutive failures
+
+        # --- TEAM ANTIGRAVITY ---
+        self.tg_repo = TigerGraphRepository()
 
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
@@ -134,7 +140,15 @@ class AuditService:
             
             # PHASE 3: ANALYSIS & AGGREGATION
             self.logger.info(f"Analysis Complete. Discovered {len(violations)} violations.")
-            
+
+            # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
+            for v in violations:
+                for node in v.nodes:
+                    html_snippet = str(node.get("html", ""))
+                    if html_snippet:
+                        await self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
+            # -------------------------------------
+
             # PHASE 4: PERSISTENCE
             async with self._lock:
                 self.logger.debug(f"Committing {len(violations)} records to the repository...")
@@ -358,6 +372,86 @@ class AuditService:
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
 
+<<<<<<< HEAD
+=======
+    def generate_remediation_plan(self, violations: List[Violation]) -> str:
+        """
+        Generates a comprehensive remediation plan with code-level fixes.
+        """
+        plan = [
+            "# AUDITOR REMEDIATION PLAN",
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "---",
+            ""
+        ]
+        
+        # Priority Ranking
+        sorted_violations = sorted(
+            violations, 
+            key=lambda x: x.impact.value if x.impact else 99
+        )
+
+        for i, v in enumerate(sorted_violations):
+            if i >= 15: # Performance capping
+                plan.append(f"## ... and {len(violations) - 15} more violations.")
+                break
+            
+            plan.append(f"## [{v.impact.name}] {v.rule_id}")
+            plan.append(f"**Target Selector:** `{v.selector}`")
+            plan.append(f"**Issue:** {v.description}")
+            plan.append("**Proposed Technical Fix:**")
+            
+            fix = self._calculate_proposed_code_fix(v)
+            plan.append(f"```html\n{fix}\n```")
+            plan.append(f"**Reference Documentation:** [WCAG Technique]({v.help_url})")
+            plan.append("")
+
+        return "\n".join(plan)
+
+    def _calculate_proposed_code_fix(self, violation: Violation, node: Dict[str, Any]) -> str:
+        """
+        Cycle 12: Forensic Remediation Synthesis - Generates surgical code patches.
+        """
+        rule = str(violation.rule_id).upper()
+        selector = str(node.get("target", "element"))
+        html = str(node.get("html", ""))
+        
+        # 1. HEURISTIC-TARGET-036 (Interactive Target Size)
+        if "TARGET-036" in rule:
+            return f'/* Proposed CSS Fix */\n{selector} {{\n  min-width: 44px;\n  min-height: 44px;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n}}'
+            
+        # 2. HEURISTIC-ALT-050 (Missing/Generic Alt Text)
+        if "ALT-050" in rule:
+            if "alt=" in html:
+                return html.replace('alt=""', 'alt="[DESCRIPTIVE_TEXT_HERE]"').replace("alt=''", "alt='[DESCRIPTIVE_TEXT_HERE]'")
+            return html.replace("<img ", '<img alt="[DESCRIPTIVE_TEXT_HERE]" ')
+            
+        # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
+        if "SVG-ACC-301" in rule:
+            return '<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
+            
+        # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
+        if "ARIA-REL-210" in rule:
+            return f'<!-- Ensure internal references are valid -->\n{html.replace("aria-", "id=\"UNIQUE_ID\" aria-")}'
+            
+        # 5. HEURISTIC-HEAD-047 (Skipped Heading Level)
+        if "HEAD-047" in rule:
+            # Shift heading to maintain logical hierarchy
+            return f'<!-- Logical Heading Shift -->\n{html.replace("<h", "<!-- Suggest shift to appropriate level -->\n<h")}'
+            
+        # 6. Standard ARIA fixes
+        if "aria" in rule.lower():
+            if "aria-label" not in html:
+                return html.replace(">", ' aria-label="DESCRIPTIVE_LABEL">', 1)
+            return html
+            
+        # 7. Color Contrast
+        if "color" in rule.lower() or "contrast" in rule.lower():
+            return f'/* Enhance Contrast */\n{selector} {{\n  color: #FFFFFF !important;\n  background-color: #000000 !important;\n  border: 1px solid #FFFFFF;\n}}'
+        
+        return "<!-- Manual review required: No automated patch synthesized. -->"
+
+>>>>>>> 9477f9d (Initial commit with TigerGraph integration)
     # --------------------------------------------------------------------------
     # ENGINE POLICY ENFORCEMENT ENGINE (ZPE-10)
     # --------------------------------------------------------------------------
@@ -436,7 +530,7 @@ class AuditService:
             await asyncio.sleep(0.5) 
             
             # Atomic commit to redundant cold-ledger
-            self.logger.info(f"Redundant persistence synchronized via Secondary-Alpha-Sync.")
+            self.logger.info("Redundant persistence synchronized via Secondary-Alpha-Sync.")
             return True
         except Exception as fe:
             self.logger.fatal(f"ENGINE CATASTROPHIC PERSISTENCE LOSS: Failover driver unreachable: {fe}")
@@ -506,7 +600,7 @@ class AuditService:
         """
         atlas = [
             "# VANGUARD NATIONAL COMPLIANCE ATLAS (Z10-NCA)",
-            f"Sector Authority: National Digital Intelligence Unit",
+            "Sector Authority: National Digital Intelligence Unit",
             f"Generation Date: {datetime.now().isoformat()}",
             "---",
             ""
@@ -882,7 +976,7 @@ class AuditService:
             blueprint.append(f"**Selector**: `{v.selector}`")
             blueprint.append("**Proposed Fix**:")
             blueprint.append("```css")
-            blueprint.append(f"/* Engine-Generated CSS Patch */")
+            blueprint.append("/* Engine-Generated CSS Patch */")
             blueprint.append(f"{v.selector} {{ outline: 2px solid #FF0000; }}")
             blueprint.append("```")
             blueprint.append("---")

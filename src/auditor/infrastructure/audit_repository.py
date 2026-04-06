@@ -6,26 +6,20 @@ Role: Persistence of audit sessions and violations.
 This module implements the repository pattern for accessibility results.
 """
 
-import logging
-from typing import List, Optional, Dict, Any, Union, Annotated
+from typing import List
 from uuid import UUID
-from datetime import datetime
 
 # IDE Pathing Resolution & Relative Import Resilience
-from sqlmodel import select, update, delete, func # type: ignore
+from sqlmodel import select, func # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from sqlalchemy.orm import selectinload # type: ignore
 
 import asyncio
-import os
-import sys
 
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
-from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
-from auditor.domain.models import AuditTarget # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.domain.interfaces import IAuditRepository # type: ignore
-from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
+from auditor.domain.audit_session import AuditSession # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.domain.exceptions import RepositoryError # type: ignore
 
@@ -164,15 +158,15 @@ class SqlAlchemyAuditRepository(IAuditRepository):
         """Checks for missing columns and performs lightweight migration."""
         try:
             # PRAGMA check is fast and safe for SQLite
-            res = await self.db_session.execute(select(func.count()).select_from(ViolationModel))
+            res = await self.db_session.exec(select(func.count()).select_from(ViolationModel))
             # Just a probe to see if it crashes on SELECT * (implicitly done by session.merge later)
             # But better to use PRAGMA for explicit check
             from sqlalchemy import text # type: ignore
-            res = await self.db_session.execute(text("PRAGMA table_info(violations)"))
+            res = await self.db_session.exec(text("PRAGMA table_info(violations)"))
             columns = [row[1] for row in res.fetchall()]
             if "selector" not in columns:
                 self.logger.warning("SCHEMA MISMATCH: Column 'selector' missing in 'violations'. Migrating...")
-                await self.db_session.execute(text("ALTER TABLE violations ADD COLUMN selector TEXT"))
+                await self.db_session.exec(text("ALTER TABLE violations ADD COLUMN selector TEXT"))
                 await self.db_session.commit()
                 self.logger.info("Migration SUCCESS: Column 'selector' added.")
         except Exception as e:

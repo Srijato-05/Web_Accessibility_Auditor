@@ -8,34 +8,27 @@ audit operations.
 """
 
 import asyncio
-import logging
-import json
 import os
 import sys
 import psutil # type: ignore
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any, Tuple, cast
+from datetime import datetime
+from typing import List, Dict, Any, cast
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from sqlmodel import select # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
-from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor # type: ignore
 from auditor.domain.crawler import LinkDiscoveryService # type: ignore
 from auditor.application.audit_service import AuditService # type: ignore
 from auditor.application.crawl_service import CrawlService # type: ignore
-from auditor.domain.target_repository import ITargetRepository # type: ignore
 from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.domain.exceptions import BatchError, RepositoryError # type: ignore
-from auditor.infrastructure.persistence_models import TargetModel # type: ignore
-from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
 
 class BatchAuditManager:

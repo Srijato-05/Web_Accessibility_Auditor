@@ -10,7 +10,6 @@ Serialization: JSON.
 """
 
 import json
-import logging
 import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
@@ -22,8 +21,7 @@ try:
 except ImportError:
     REDIS_AVAILABLE = False
 
-from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
-from sqlmodel import select, update, delete # type: ignore
+from sqlmodel import select, update # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from auditor.infrastructure.task_model import TaskModel # type: ignore
 

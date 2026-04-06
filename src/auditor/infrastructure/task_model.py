@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Dict, Any, Optional
-from uuid import uuid4
 from sqlmodel import SQLModel, Field # type: ignore
 from sqlalchemy import Column, JSON, MetaData # type: ignore
 

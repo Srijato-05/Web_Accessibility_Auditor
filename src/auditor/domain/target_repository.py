@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from typing import List
-from uuid import UUID
 from .models import AuditTarget
 
 class ITargetRepository(ABC):

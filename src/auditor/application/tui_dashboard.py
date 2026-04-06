@@ -17,12 +17,11 @@ from rich.table import Table # type: ignore
 from rich.panel import Panel # type: ignore
 from rich.layout import Layout # type: ignore
 from rich.console import Console # type: ignore
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn # type: ignore
-from rich.columns import Columns # type: ignore
 from rich import box # type: ignore
 
 # IDE PATH RECONCILIATION
-import os, sys
+import os
+import sys
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)

@@ -11,10 +11,10 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
 
 from sqlmodel import SQLModel, Field, Relationship # type: ignore
-from sqlalchemy import Column, JSON, String, DateTime # type: ignore
+from sqlalchemy import Column, JSON # type: ignore
 
-from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
-from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
+from auditor.domain.audit_session import SessionStatus # type: ignore
+from auditor.domain.models import DomainStatus # type: ignore
 
 class AuditSessionModel(SQLModel, table=True):
     __tablename__ = "audit_sessions"

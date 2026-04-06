@@ -1,10 +1,6 @@
 import asyncio
 import sys
 import os
-import logging
-import json
-from datetime import datetime
-from typing import Optional, Any, Dict, Union
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -16,16 +12,10 @@ from sqlmodel import SQLModel # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
 # Core Technical Imports
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
-from auditor.infrastructure.task_model import TaskModel # type: ignore
-from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
-from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor # type: ignore
 from auditor.domain.crawler import LinkDiscoveryService # type: ignore
 from auditor.domain.models import AuditTarget # type: ignore
-from auditor.application.audit_service import AuditService # type: ignore
-from auditor.application.crawl_service import CrawlService # type: ignore
 from auditor.application.batch_service import BatchAuditManager # type: ignore
 from auditor.application.reporter import AuditReporter # type: ignore
 from auditor.application.discovery_service import DiscoveryService # type: ignore
@@ -92,16 +82,7 @@ Options:
             await engine.dispose()
         return
 
-    if "--report" in sys.argv:
-        try:
-            async with AsyncSession(engine) as session:
-                reporter = AuditReporter(session)
-                await reporter.generate_summary_report()
-        except Exception as e:
-            auditor_logger.critical(f"Reporting Failure: {e}")
-        finally:
-            await engine.dispose()
-        return
+
 
     if "--discover" in sys.argv:
         try:

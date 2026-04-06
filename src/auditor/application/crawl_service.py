@@ -8,9 +8,8 @@ at the site level.
 """
 
 import asyncio
-import logging
-from typing import Set, List, Dict, Optional, Any, Tuple
-from urllib.parse import urlparse, urljoin
+from typing import Set, List
+from urllib.parse import urlparse
 from datetime import datetime
 import sys
 import os
@@ -23,8 +22,8 @@ if _root not in sys.path:
 from auditor.domain.crawler import LinkDiscoveryService
 from auditor.application.audit_service import AuditService
 from auditor.shared.logging import auditor_logger
-from auditor.domain.exceptions import NavigationError, AuditFailedError, RepositoryError
-from auditor.domain.rules_nexus import RulesNexus
+from auditor.domain.exceptions import AuditFailedError
+from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
 
 class CrawlService:
     """
@@ -56,8 +55,11 @@ class CrawlService:
         self.success_count = 0
         self.failed_count = 0
         self.filtered_count = 0
-        
+
         self.logger = auditor_logger.getChild("CrawlController")
+
+        # --- TEAM ANTIGRAVITY ---
+        self.tg_repo = TigerGraphRepository()
 
     # --------------------------------------------------------------------------
     # CORE RECURSIVE DISCOVERY PROCESS
@@ -70,7 +72,7 @@ class CrawlService:
         Args:
             start_url: The root URL for the discovery process.
         """
-        self.logger.info(f"--- [ DISCOVERY PROCESS INITIATED ] ---")
+        self.logger.info("--- [ DISCOVERY PROCESS INITIATED ] ---")
         self.logger.info(f"Root Target: {start_url} | Capacity: {self.max_pages} pages")
         
         start_time = datetime.now()
@@ -129,9 +131,22 @@ class CrawlService:
                 if depth < self.max_depth and self.discovered_count < self.max_pages:
                     self.logger.debug(f"Extracting sub-targets from {url}...")
                     links = await self.crawler_service.extract_links(url)
-                    
+
+                    # Extract root domain for the graph
+                    parsed_root = urlparse(url)
+                    domain_root = f"{parsed_root.scheme}://{parsed_root.netloc}"
+
                     for link in links:
                         normalized = self._normalize_url(link)
+
+                        # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
+                        await self.tg_repo.upsert_page_link_async(
+                            source_url=url,
+                            target_url=normalized,
+                            domain_url=domain_root,
+                        )
+                        # -------------------------------------
+
                         if normalized not in self.visited_urls and self._is_internal(start_url=url, target_url=normalized):
                             self.visited_urls.add(normalized)
                             # Depth-based priority calculation
