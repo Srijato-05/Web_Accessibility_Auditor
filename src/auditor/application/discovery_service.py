@@ -72,7 +72,7 @@ class DiscoveryService:
                 try:
                     target = AuditTarget(url=url)
                     await self.target_repo.add_domain(target)
-                except Exception as e:
+                except Exception:
                     self.logger.debug(f"Target already exists in ledger: {url}")
                 
                 await self.queue.push_task("single_url_audit", {"url": url})

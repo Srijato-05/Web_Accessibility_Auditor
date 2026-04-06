@@ -18,14 +18,11 @@ import os
 import sys
 import asyncio
 import time
-import logging
 import random
-import json
 import math
-from typing import List, Any, Dict, Optional, Union, Tuple, Set, Annotated, cast
+from typing import List, Any, Dict, Optional, Tuple, cast
 from uuid import UUID
 from datetime import datetime
-from urllib.parse import urlparse
 
 # ENGINE PATH RECONCILIATION: Ensuring absolute import stability
 root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -37,9 +34,8 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from axe_playwright_python.async_playwright import Axe # type: ignore
 from auditor.domain.interfaces import IBrowserEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
-from auditor.domain.exceptions import EngineError, NavigationError, AuditFailedError, DomainBlockedError # type: ignore
+from auditor.domain.exceptions import EngineError, AuditFailedError # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
-from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.shared.stealth_profiles import StealthProfileGenerator # type: ignore
 from auditor.infrastructure.stealth_protocol import StealthProtocol # type: ignore
 
@@ -415,11 +411,11 @@ class PlaywrightEngine(IBrowserEngine):
                     # Actually, let's just try forensics if it didn't timeout
                     pass
                 
-                if 'axe_violations' in locals() and (axe_violations or (isinstance(axe_violations, list))):
-                 try:
-                    custom_v = await self._run_proprietary_heuristics(page)
-                 except Exception as he:
-                    self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
+                if isinstance(axe_violations, list):
+                    try:
+                        custom_v = await self._run_proprietary_heuristics(page)
+                    except Exception as he:
+                        self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
                 
                 # 5. Synthesis & Telemetry
                 all_violations = axe_violations + custom_v
@@ -579,14 +575,14 @@ class PlaywrightEngine(IBrowserEngine):
             # Heuristic 1: Semantic Skeleton Analysis (including Shadow Roots)
             all_scopes = await self._find_all_render_contexts(page)
             for scope_id, selector in all_scopes:
-                semantic_score = await page.evaluate(f"(sel) => {{ \
+                semantic_score = await page.evaluate("(sel) => { \
                     const root = sel === 'document' ? document : document.querySelector(sel).shadowRoot; \
                     let score = 0; \
                     if(root.querySelector('header')) score += 0.2; \
                     if(root.querySelector('main')) score += 0.5; \
                     if(root.querySelector('footer')) score += 0.3; \
                     return score; \
-                }}", selector)
+                }", selector)
                 
                 if semantic_score < 0.7:
                     self.logger.warning(f"Engine Detection: Low Semantic Integrity Signature ({semantic_score}) in {selector}")
@@ -903,13 +899,13 @@ class PlaywrightEngine(IBrowserEngine):
     async def _analyze_alt_text_quality(self, page: Page) -> List[Violation]:
         """Item 50: Flag generic/redundant alt descriptions."""
         generic_terms = ["image", "img", "photo", "pic", "graphic", "icon", "logo", "drawing", "picture"]
-        script = f"""() => {{
+        script = """() => {
             const images = Array.from(document.querySelectorAll('img[alt]'));
-            return images.map(img => ({{
+            return images.map(img => ({
                 html: img.outerHTML.slice(0, 200),
                 alt: img.alt.toLowerCase().trim()
-            }}));
-        }}"""
+            }));
+        }"""
         img_data = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
         for img in img_data:

@@ -10,15 +10,13 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from typing import List, Dict, Any, Optional, Tuple, cast
-from sqlmodel import SQLModel, select # type: ignore
+from typing import List, Dict, Tuple
+from sqlmodel import SQLModel # type: ignore
 from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel, TargetModel # type: ignore
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository # type: ignore
-from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
-from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.models import AuditTarget # type: ignore
 
 DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 
@@ -157,7 +155,7 @@ async def main():
         else:
             added, skipped = await seed_from_matrix(batch_repo, DEFAULT_SECTOR_MATRIX)
 
-    print(f"\n[Auditor] SEEDING COMPLETE.")
+    print("\n[Auditor] SEEDING COMPLETE.")
     print(f" -> Targets Added: {added}") # type: ignore
     print(f" -> Targets Skipped: {skipped}") # type: ignore
 

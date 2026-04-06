@@ -9,7 +9,6 @@ Responsibilities:
   - Generating premium, responsive HTML dashboards for stakeholders.
 """
 
-import asyncio
 import os
 import sys
 import json
@@ -20,7 +19,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 from sqlalchemy.future import select # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore

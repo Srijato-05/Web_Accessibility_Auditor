@@ -6,7 +6,7 @@ Role: Centralized repository for accessibility audit rules and logic.
 This module defines the rules and standards used to evaluate page accessibility.
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from dataclasses import dataclass
 
 @dataclass

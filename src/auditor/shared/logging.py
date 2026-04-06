@@ -1,8 +1,6 @@
 import logging
 import sys
 import json
-from datetime import datetime
-from typing import Any, Dict
 
 class AuditorFormatter(logging.Formatter):
     """Structured log formatter for the Audit Engine."""
@@ -58,6 +56,10 @@ def setup_auditor_logging(level=logging.INFO):
     logger.addHandler(ch)
 
     # Structured JSON File Handler for Batch audits
+    import os
+    os.makedirs("reports/logs", exist_ok=True)
+    os.makedirs("reports/data", exist_ok=True)
+    os.makedirs("reports/forensics/har", exist_ok=True)
     fh = logging.FileHandler("reports/logs/auditor.log")
     fh.setFormatter(AuditorJSONFormatter())
     logger.addHandler(fh)

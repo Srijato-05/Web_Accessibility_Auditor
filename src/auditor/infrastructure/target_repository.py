@@ -8,10 +8,8 @@ in the database.
 """
 
 import asyncio
-import logging
-from typing import List, Optional, Dict, Any, Union, Annotated
-from datetime import datetime
-from sqlmodel import select, update, delete
+from typing import List, Optional
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auditor.domain.models import AuditTarget, DomainStatus

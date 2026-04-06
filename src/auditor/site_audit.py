@@ -12,9 +12,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 # Extreme Registry Imports
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
-from auditor.infrastructure.playwright_engine import PlaywrightEngine
 from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
 from auditor.domain.crawler import LinkDiscoveryService
 from auditor.application.audit_service import AuditService
@@ -67,7 +65,7 @@ Options:
         try:
             auditor_logger.info(f"Targeting Domain Ecosystem: {url}")
             await crawl_orchestrator.run(url)
-            auditor_logger.info(f"National Discovery Swarm DISMISSED.")
+            auditor_logger.info("National Discovery Swarm DISMISSED.")
         except Exception as e:
             auditor_logger.critical(f"FATAL: Autonomous Discovery Failure at {url}: {e}")
 

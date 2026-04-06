@@ -8,12 +8,11 @@ accessibility violations.
 """
 
 import asyncio
-import logging
 import time
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union, Annotated
+from typing import List, Dict, Any, Optional, Annotated
 from uuid import UUID
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
@@ -26,8 +25,8 @@ from auditor.domain.interfaces import IBrowserEngine, IAuditRepository # type: i
 from auditor.domain.exceptions import AuditFailedError, NavigationError, RepositoryError, BatchError # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
-from auditor.domain.rules_nexus import RulesNexus # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
+from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
 
 class AuditService:
     """
@@ -57,6 +56,9 @@ class AuditService:
             "circuit_broken": False
         }
         self.CIRCUIT_THRESHOLD = 5 # Trip after 5 consecutive failures
+
+        # --- TEAM ANTIGRAVITY ---
+        self.tg_repo = TigerGraphRepository()
 
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
@@ -126,7 +128,15 @@ class AuditService:
             
             # PHASE 3: ANALYSIS & AGGREGATION
             self.logger.info(f"Analysis Complete. Discovered {len(violations)} violations.")
-            
+
+            # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
+            for v in violations:
+                for node in v.nodes:
+                    html_snippet = str(node.get("html", ""))
+                    if html_snippet:
+                        await self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
+            # -------------------------------------
+
             # PHASE 4: PERSISTENCE
             async with self._lock:
                 self.logger.debug(f"Committing {len(violations)} records to the repository...")
@@ -339,7 +349,7 @@ class AuditService:
             
         # 3. HEURISTIC-SVG-ACC-301 (SVG Accessibility)
         if "SVG-ACC-301" in rule:
-            return f'<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
+            return '<svg role="img" ...>\n  <title>Descriptive Vector Title</title>\n  <!-- ... original paths ... -->\n</svg>'
             
         # 4. HEURISTIC-ARIA-REL-210 (Broken IDREFs)
         if "ARIA-REL-210" in rule:
@@ -440,7 +450,7 @@ class AuditService:
             await asyncio.sleep(0.5) 
             
             # Atomic commit to redundant cold-ledger
-            self.logger.info(f"Redundant persistence synchronized via Secondary-Alpha-Sync.")
+            self.logger.info("Redundant persistence synchronized via Secondary-Alpha-Sync.")
             return True
         except Exception as fe:
             self.logger.fatal(f"ENGINE CATASTROPHIC PERSISTENCE LOSS: Failover driver unreachable: {fe}")
@@ -510,7 +520,7 @@ class AuditService:
         """
         atlas = [
             "# VANGUARD NATIONAL COMPLIANCE ATLAS (Z10-NCA)",
-            f"Sector Authority: National Digital Intelligence Unit",
+            "Sector Authority: National Digital Intelligence Unit",
             f"Generation Date: {datetime.now().isoformat()}",
             "---",
             ""
@@ -851,7 +861,7 @@ class AuditService:
             blueprint.append(f"**Selector**: `{v.selector}`")
             blueprint.append("**Proposed Fix**:")
             blueprint.append("```css")
-            blueprint.append(f"/* Engine-Generated CSS Patch */")
+            blueprint.append("/* Engine-Generated CSS Patch */")
             blueprint.append(f"{v.selector} {{ outline: 2px solid #FF0000; }}")
             blueprint.append("```")
             blueprint.append("---")

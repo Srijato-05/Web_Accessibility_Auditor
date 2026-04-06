@@ -12,9 +12,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 # Extreme Registry Imports
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
-from auditor.infrastructure.playwright_engine import PlaywrightEngine
 from auditor.application.audit_service import AuditService
 from auditor.shared.logging import auditor_logger
 

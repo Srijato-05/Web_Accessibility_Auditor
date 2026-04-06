@@ -46,3 +46,4 @@ coverage/
 .ruff_cache/
 pyrightconfig.json
 reports/
+tmp/

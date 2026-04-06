@@ -9,14 +9,13 @@ Responsibilities:
   - Extracting sitemap locations for discovery engines.
 """
 
-import logging
-import httpx # type: ignore
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse
-from typing import List, Optional
+from typing import List
 
 # IDE PATH RECONCILIATION
-import os, sys
+import os
+import sys
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
