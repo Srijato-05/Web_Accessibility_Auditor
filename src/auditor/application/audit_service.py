@@ -34,6 +34,7 @@ from auditor.application.agents.controller import AgentController
 from auditor.application.agents.visual_agent import VisualAgent
 from auditor.application.agents.motor_agent import MotorAgent
 from auditor.application.agents.cognitive_agent import CognitiveAgent
+# from auditor.application.agents.neural_agent import NeuralAgent # Moved to local scope for lazy loading
 
 class AuditService:
     """
@@ -71,7 +72,7 @@ class AuditService:
     # CORE MISSION: THE SECURE AUDIT PIPELINE
     # --------------------------------------------------------------------------
 
-    async def execute_audit(self, url: str) -> AuditSession:
+    async def execute_audit(self, url: str, skip_neural: bool = False) -> AuditSession:
         """
         Coordinates a high-concurrency accessibility audit.
         
@@ -141,24 +142,41 @@ class AuditService:
             # --- DISABILITY AGENTS INTEGRATION ---
             if hasattr(engine, 'page_data') and engine.page_data:
                 try:
-                    self.logger.info("Engaging Specialized Accessibility Agents...")
+                    self.logger.info(f"Engaging Specialized Accessibility Agents: Visual, Motor, Cognitive, Neural...")
+                    from auditor.application.agents.neural_agent import NeuralAgent
                     agents = [VisualAgent(), MotorAgent(), CognitiveAgent()]
+                    if not skip_neural:
+                        agents.append(NeuralAgent())
+                        
                     controller = AgentController(agents)
                     agent_findings = await controller.analyze(engine.page_data)
                     
+                    # Cycle 12: Knowledge persistence for PDF/Stakeholder Reporting
+                    controller.export_findings(agent_findings, str(session.id), url)
+                    
                     # Convert AgentFindings to standard Violation objects for unified reporting
                     for af in agent_findings:
+                        self.logger.info(f"AGENT FINDING [{af.agent.upper()}]: {af.issue} at {af.selector}")
                         v = Violation(
-                            rule_id=f"{af.agent.upper()}-{af.guideline}",
+                            rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
                             impact=ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE,
-                            description=f"{af.issue} Fix: {af.fix}",
+                            description=f"[{af.agent.upper()} AGENT] {af.issue} (Confidence: {af.confidence}). Fix Recommended: {af.fix}",
                             help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}"
                         )
-                        v.nodes = [{"target": [af.selector], "html": af.element}]
+                        v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue}]
                         v.selector = af.selector
                         violations.append(v)
                     
-                    self.logger.info(f"Agent analysis complete. Added {len(agent_findings)} specialized findings.")
+                    # Store high-level agent summary in the session metadata
+                    session.agent_summary = {
+                        "visual_count": len([af for af in agent_findings if af.agent == 'visual']),
+                        "motor_count": len([af for af in agent_findings if af.agent == 'motor']),
+                        "cognitive_count": len([af for af in agent_findings if af.agent == 'cognitive']),
+                        "neural_count": len([af for af in agent_findings if af.agent == 'neural']),
+                        "primary_risk": agent_findings[0].issue if agent_findings else "None Detected"
+                    }
+                    
+                    self.logger.info(f"Agent analysis complete. Total Mission Findings: {len(agent_findings)} Agent Violations added.")
                 except Exception as ae:
                     self.logger.warning(f"Accessibility Agents Hub Failure: {ae}")
             # -------------------------------------
@@ -178,6 +196,13 @@ class AuditService:
                 
                 # Update Session State
                 session.complete()
+                
+                # Capture remediation plan in DB for frontend Intelligence Link
+                try:
+                    session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations))
+                except:
+                    pass
+                    
                 await self.repository.save_session(session)
                 
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
@@ -216,6 +241,11 @@ class AuditService:
             # PHASE 5: FINAL RECONCILIATION
             # Ensure the audit session state is ALWAYS preserved in the DB
             await self._session_reconciliation(session)
+            
+            # Explicit Teardown of mission-local engine
+            if not self.engine and 'engine' in locals() and engine:
+                self.logger.info("Decommissioning local browser engine...")
+                await engine.teardown()
             
         return session
 
@@ -290,7 +320,7 @@ class AuditService:
             key = (v.impact, v.rule_id)
             rule_agg[key] = rule_agg.get(key, 0) + 1
 
-        for (impact, rule_id), count in sorted(rule_agg.items(), key=lambda x: x[0].value):
+        for (impact, rule_id), count in sorted(rule_agg.items(), key=lambda x: x[0][0].value if hasattr(x[0][0], 'value') else str(x[0][0])):
             style = impact_styles.get(impact, "white")
             table.add_row(
                 f"[{style}]{impact.name}[/]",

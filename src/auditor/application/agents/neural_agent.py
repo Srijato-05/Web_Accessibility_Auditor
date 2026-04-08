@@ -14,12 +14,21 @@ from auditor.infrastructure.data_extractor import PageData
 from auditor.domain.interfaces import IAccessibilityAgent
 from auditor.shared.logging import auditor_logger
 
-try:
-    import torch
-    from transformers import pipeline
-except ImportError:
-    torch = None
-    pipeline = None
+# Lazy Loading for Heavy AI Libraries
+torch = None
+pipeline = None
+
+def _lazy_load_ml():
+    global torch, pipeline
+    if torch is None or pipeline is None:
+        try:
+            import torch as _torch
+            from transformers import pipeline as _pipeline
+            torch = _torch
+            pipeline = _pipeline
+        except ImportError:
+            torch = False
+            pipeline = False
 
 class NeuralAgent(IAccessibilityAgent):
     """
@@ -32,8 +41,11 @@ class NeuralAgent(IAccessibilityAgent):
         self.generator = None
         self.model_id = model_id
         
-        if pipeline is None:
-            self.logger.warning("Neural Agent: transformers not installed. Running in MOCK mode.")
+        # Trigger lazy load only when instance is created
+        _lazy_load_ml()
+        
+        if not pipeline:
+            self.logger.warning("Neural Agent: transformers not installed or failed to load. Running in MOCK mode.")
             return
 
         try:
@@ -64,7 +76,7 @@ class NeuralAgent(IAccessibilityAgent):
         # 1. Prepare data for Prompt
         links_summary = [
             {"text": link.text, "html": link.html[:80]} 
-            for link in page_data.links[:10] # Top 10 links
+            for link in page_data.links[:50] # Top 50 links
         ]
         
         # 2. Build Chat Prompt

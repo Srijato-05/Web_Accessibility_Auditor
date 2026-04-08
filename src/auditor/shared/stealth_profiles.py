@@ -68,12 +68,36 @@ DEVICE_PROFILES: List[Dict[str, Any]] = [
             "model": "",
             "uaFullVersion": "122.0"
         }
+    },
+    {
+        "name": "Mobile-iPhone-Chrome",
+        "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/123.0.6312.52 Mobile/15E148 Safari/604.1",
+        "viewport": {"width": 393, "height": 852}, # iPhone 15 Pro
+        "hardware": {
+            "deviceMemory": 8,
+            "hardwareConcurrency": 6,
+            "platform": "iPhone",
+            "vendor": "Apple Inc.",
+            "renderer": "Apple GPU",
+        },
+        "clientHints": {
+            "platform": "iOS",
+            "platformVersion": "17.4.1",
+            "architecture": "arm",
+            "model": "iPhone15,2",
+            "uaFullVersion": "123.0.6312.52"
+        }
     }
 ]
 
 class StealthProfileGenerator:
     """Generates polymorphic browser footprints."""
     
+    @staticmethod
+    def get_all_profiles() -> List[Dict[str, Any]]:
+        """Returns the full list of available device profiles."""
+        return DEVICE_PROFILES
+
     @staticmethod
     def get_random_profile() -> Dict[str, Any]:
         """Returns a randomized but coherent device profile."""

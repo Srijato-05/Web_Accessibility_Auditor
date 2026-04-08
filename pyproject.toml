@@ -15,16 +15,15 @@ dependencies = [
     "python-dotenv (>=1.2.2,<2.0.0)",
     "redis (>=7.3.0,<8.0.0)",
     "sqlalchemy (>=2.0.48,<3.0.0)",
-    "sqlmodel (>=0.0.22,<0.1.0)",
+    "sqlmodel (>=0.0.22,<1.0.0)",
     "alembic (>=1.18.4,<2.0.0)",
     "aiosqlite (>=0.22.1,<0.23.0)",
     "psutil (>=6.1.1,<7.0.0)",
-<<<<<<< HEAD
-    "rich (>=13.9.4,<14.0.0)"
-=======
-    "sqlmodel (>=0.0.22,<1.0.0)",
-    "pyTigerGraph (>=1.0.0,<2.0.0)"
->>>>>>> 9477f9d (Initial commit with TigerGraph integration)
+    "rich (>=14.2.0)",
+    "pyTigerGraph (>=1.0.0,<2.0.0)",
+    "langdetect (>=1.0.9)",
+    "torch (>=2.0.0)",
+    "transformers (>=4.40.0)"
 ]
 
 [build-system]

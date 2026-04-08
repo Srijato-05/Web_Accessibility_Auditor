@@ -1,7 +1,14 @@
+import sys
+import asyncio
+
+# MANDATORY: Windows asyncio subprocess support for Playwright
+# This MUST happen before ANY other imports (including FastAPI)
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import sys
 
 # Add src to python path if not exist
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

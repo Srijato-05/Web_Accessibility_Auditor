@@ -7,25 +7,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#FAFAFA',      /* Paper */
-        surface: '#FFFFFF',         /* White */
-        'surface-highlight': '#F3F4F6',
-        'surface-border': '#E5E7EB',
-        'on-surface': '#1F2937',    /* Ink / Lead */
-        'on-surface-variant': '#6B7280',
-        primary: '#2563EB',         /* Cobalt */
-        'primary-hover': '#1D4ED8',
-        'on-primary': '#FFFFFF',
-        secondary: '#059669',       /* Emerald */
-        'secondary-hover': '#047857',
-        error: '#DC2626',           /* Crimson */
-        'error-bg': '#FEF2F2',
-        warning: '#D97706',         /* Amber */
-        'warning-bg': '#FFFBEB'
+        background: '#050507',
+        surface: '#121217',
+        'surface-highlight': 'rgba(255, 255, 255, 0.05)',
+        'surface-border': 'rgba(255, 255, 255, 0.1)',
+        'on-surface': '#e0e0e6',
+        'on-surface-variant': '#9494a3',
+        primary: '#00f2ff',
+        'primary-hover': '#00d0db',
+        'on-primary': '#050507',
+        secondary: '#7000ff',
+        'secondary-hover': '#5d00d6',
+        error: '#ff007a',
+        'error-bg': 'rgba(255, 0, 122, 0.1)',
+        warning: '#f0b429',
+        'warning-bg': 'rgba(240, 180, 41, 0.1)',
+        accent: '#ff007a'
       },
       fontFamily: {
-        heading: ['Inter', 'sans-serif'],
+        heading: ['Orbitron', 'sans-serif'],
         body: ['Inter', 'sans-serif'],
+        futuristic: ['Orbitron', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
       },
       borderRadius: {

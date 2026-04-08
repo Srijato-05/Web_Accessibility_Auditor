@@ -28,8 +28,12 @@ class AuditSessionModel(SQLModel, table=True):
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     
-    # Phase VII: Forensic Metadata
-    focus_path: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    # Phase XI: Intelligence Persistence
+    remediation_plan: Optional[str] = Field(default=None)
+    agent_summary: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    
+    # Forensic Telemetry (Cycle VII)
+    focus_path: List[str] = Field(default=[], sa_column=Column(JSON))
     aria_events: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     
     violations: List["ViolationModel"] = Relationship(back_populates="session")

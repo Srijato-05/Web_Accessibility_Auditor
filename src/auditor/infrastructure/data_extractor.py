@@ -12,6 +12,7 @@ Produces a PageData object consumed by all accessibility agents.
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+import asyncio
 
 from auditor.shared.logging import auditor_logger
 
@@ -260,8 +261,18 @@ async def extract_page_data(
     url = page.url
     logger.info(f"Extracting page data from: {url}")
 
-    links_raw = await page.evaluate(EXTRACT_LINKS_JS)
-    links = [_parse_element(r) for r in (links_raw or [])]
+    # Cycle 15: Hydration-Resilient Extraction (Retry Loop)
+    for attempt in range(2):
+        links_raw = await page.evaluate(EXTRACT_LINKS_JS)
+        links = [_parse_element(r) for r in (links_raw or [])]
+        
+        if len(links) > 0:
+            break
+            
+        if attempt == 0:
+            logger.warning(f"Hydration Delay Detected: 0 links found on {url}. Retrying in 3s...")
+            await asyncio.sleep(3.0)
+
     logger.debug(f"Extracted {len(links)} link elements")
 
     text_raw = await page.evaluate(EXTRACT_TEXT_ELEMENTS_JS)

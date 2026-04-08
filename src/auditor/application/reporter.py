@@ -20,7 +20,7 @@ if _root not in sys.path:
 
 from datetime import datetime
 from typing import Dict, Any
-from sqlalchemy.future import select # type: ignore
+from sqlmodel import select, desc # type: ignore
 from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
@@ -37,25 +37,32 @@ class AuditReporter:
         self.session = session
         self.logger = auditor_logger.getChild("Reporter")
 
-    async def generate_summary_report(self, output_dir: str = "reports/exports") -> Dict[str, str]:
-        """Generates both HTML and JSON reports for the most recent session."""
+    async def generate_summary_report(self, session_id: Any = None, output_dir: str = "reports/exports") -> Dict[str, str]:
+        """Generates both HTML and JSON reports for a specific session (or latest if None)."""
         os.makedirs(output_dir, exist_ok=True)
         
-        # 1. Fetch Latest Completed Session
-        stmt = select(AuditSessionModel).where(
-            AuditSessionModel.status == SessionStatus.COMPLETED
-        ).order_by(AuditSessionModel.started_at.desc()).limit(1)
-        res = await self.session.execute(stmt)
-        session_record = res.scalar_one_or_none()
+        # 1. Fetch Targeted Session
+        if session_id:
+            from uuid import UUID
+            if isinstance(session_id, str):
+                session_id = UUID(session_id)
+            stmt = select(AuditSessionModel).where(AuditSessionModel.id == session_id)
+        else:
+            stmt = select(AuditSessionModel).where(
+                AuditSessionModel.status == SessionStatus.COMPLETED
+            ).order_by(desc(AuditSessionModel.started_at)).limit(1)
+
+        res = await self.session.exec(stmt)
+        session_record = res.first()
         
         if not session_record:
-            self.logger.warning("Reporting Abort: No completed audit data available in persistence.")
+            self.logger.warning(f"Reporting Abort: Session {session_id} not found or no completed audits.")
             return {}
 
         # 2. Fetch Violations
         v_stmt = select(ViolationModel).where(ViolationModel.session_id == session_record.id)
-        v_res = await self.session.execute(v_stmt)
-        violations = v_res.scalars().all()
+        v_res = await self.session.exec(v_stmt)
+        violations = v_res.all()
 
         # 3. Serialize Data
         report_data = {
@@ -64,24 +71,26 @@ class AuditReporter:
             "start_time": session_record.started_at.isoformat() if session_record.started_at else None,
             "end_time": session_record.completed_at.isoformat() if session_record.completed_at else None,
             "total_violations": len(violations),
-            "focus_path": session_record.focus_path if hasattr(session_record, 'focus_path') else [],
-            "aria_events": session_record.aria_events if hasattr(session_record, 'aria_events') else [],
+            "focus_path": getattr(session_record, 'focus_path', []),
+            "aria_events": getattr(session_record, 'aria_events', []),
             "violations": [
                 {
-                    "rule_id": v.id,
-                    "impact": v.impact,
-                    "description": v.description,
-                    "selector": v.selector,
-                    "help_url": v.help_url,
-                    "tags": v.tags
+                    "rule_id": getattr(v, "rule_id", "UNKNOWN"),
+                    "uuid": str(getattr(v, "id", "")),
+                    "impact": getattr(v, "impact", "minor"),
+                    "description": getattr(v, "description", ""),
+                    "selector": getattr(v, "selector", ""),
+                    "help_url": getattr(v, "help_url", ""),
+                    "tags": getattr(v, "tags", [])
                 } for v in violations
             ]
         }
 
         # 4. Generate Exports
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        json_path = os.path.join(output_dir, f"audit_report_{timestamp}.json")
-        html_path = os.path.join(output_dir, f"audit_report_{timestamp}.html")
+        safe_id = str(session_record.id)[:8] # type: ignore
+        json_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.json")
+        html_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.html")
 
         # JSON Export
         with open(json_path, "w") as f:

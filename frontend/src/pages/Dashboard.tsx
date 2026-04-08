@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { client } from '../api/client';
-import { Activity, Bug, AlertTriangle, Info, Play, Loader2, ArrowRight } from 'lucide-react';
+import { Activity, Bug, AlertTriangle, Info, Play, Loader2, ArrowRight, Download } from 'lucide-react';
 import { GraphView } from '../components/GraphView';
 
 interface DashboardSummary {
@@ -90,58 +90,71 @@ export default function Dashboard() {
        </div>
 
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-           <div className="col-span-1 lg:col-span-2 space-y-4">
-              <div className="flex justify-between items-center mb-4">
-                 <h2 className="text-lg font-bold text-on-surface">Recent Scans</h2>
-                 <button onClick={() => navigate('/history')} className="text-primary text-sm font-medium hover:underline flex items-center gap-1">
-                    View History <ArrowRight size={14} />
-                 </button>
-              </div>
-              <div className="flat-panel overflow-hidden">
-                 {summary.recent_scans.length > 0 ? (
-                   <table className="w-full text-left">
-                     <thead>
-                       <tr className="border-b border-surface-border bg-surface-highlight text-xs uppercase tracking-wider text-on-surface-variant font-bold">
-                         <th className="px-6 py-3">Target</th>
-                         <th className="px-6 py-3 text-center">Score</th>
-                         <th className="px-6 py-3 text-right">Date</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {summary.recent_scans.map((log) => (
-                         <tr key={log.id} onClick={() => navigate('/insights/' + log.id)} className="border-b border-surface-border hover:bg-surface-highlight cursor-pointer transition-colors last:border-b-0 group">
-                           <td className="px-6 py-4 text-sm font-medium text-on-surface group-hover:text-primary transition-colors">{log.url}</td>
-                           <td className="px-6 py-4 text-center">
-                             <span className="text-sm font-mono font-bold text-on-surface">{log.score}</span>
-                           </td>
-                           <td className="px-6 py-4 text-right text-xs text-on-surface-variant">
-                             {new Date(log.date).toLocaleString()}
-                           </td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 ) : (
-                    <div className="p-12 text-center text-on-surface-variant flex flex-col items-center justify-center">
-                       <Activity size={32} className="opacity-20 mb-4" />
-                       <p className="text-sm">No analysis history available.</p>
-                    </div>
-                 )}
-              </div>
-           </div>
+            <div className="col-span-1 lg:col-span-2 space-y-4">
+               <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-bold text-on-surface">Recent Scans</h2>
+                  <button onClick={() => navigate('/history')} className="text-primary text-sm font-medium hover:underline flex items-center gap-1">
+                     View History <ArrowRight size={14} />
+                  </button>
+               </div>
+               <div className="flat-panel overflow-hidden">
+                  {summary.recent_scans.length > 0 ? (
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-surface-border bg-surface-highlight text-xs uppercase tracking-wider text-on-surface-variant font-bold">
+                          <th className="px-6 py-3">Target</th>
+                          <th className="px-6 py-3 text-center">Score</th>
+                          <th className="px-6 py-3 text-center">PDF</th>
+                          <th className="px-6 py-3 text-right">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.recent_scans.map((log) => (
+                          <tr key={log.id} onClick={() => navigate('/insights/' + log.id)} className="border-b border-surface-border hover:bg-surface-highlight cursor-pointer transition-colors last:border-b-0 group">
+                            <td className="px-6 py-4 text-sm font-medium text-on-surface group-hover:text-primary transition-colors">{log.url}</td>
+                            <td className="px-6 py-4 text-center">
+                              <span className="text-sm font-mono font-bold text-on-surface">{log.score}</span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.location.href = `http://localhost:8000/api/reports/${log.id}/download`;
+                                  }}
+                                  className="p-2 hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all group/btn"
+                                  title="Download Remediation PDF"
+                                >
+                                  <Download size={14} />
+                                </button>
+                            </td>
+                            <td className="px-6 py-4 text-right text-xs text-on-surface-variant">
+                              {new Date(log.date).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                     <div className="p-12 text-center text-on-surface-variant flex flex-col items-center justify-center">
+                        <Activity size={32} className="opacity-20 mb-4" />
+                        <p className="text-sm">No analysis history available.</p>
+                     </div>
+                  )}
+               </div>
+            </div>
 
-           <div className="col-span-1">
-             <div className="flex justify-between items-center mb-4">
-               <h2 className="text-lg font-bold text-on-surface">Compliance Graph</h2>
-             </div>
-             <div className="flat-panel p-4 h-[350px] flex items-center justify-center overflow-hidden">
-               {summary.recent_scans.length > 0 ? (
-                  <GraphView />
-               ) : (
-                 <p className="text-xs text-on-surface-variant uppercase tracking-widest font-bold">Awaiting Data</p>
-               )}
-             </div>
-           </div>
+            <div className="col-span-1">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold text-on-surface">Compliance Graph</h2>
+              </div>
+              <div className="flat-panel p-4 h-[350px] flex items-center justify-center overflow-hidden">
+                {summary.recent_scans.length > 0 ? (
+                   <GraphView />
+                ) : (
+                  <p className="text-xs text-on-surface-variant uppercase tracking-widest font-bold">Awaiting Data</p>
+                )}
+              </div>
+            </div>
        </div>
     </div>
   )

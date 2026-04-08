@@ -1,33 +1,140 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;400;600&display=swap');
 
+/* IDE Warning Fix: Use standard CSS instead of @apply */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    @apply bg-background text-on-surface font-body antialiased;
-  }
+:root {
+  --bg-deep: #050507;
+  --bg-surface: #121217;
+  --bg-glass: rgba(18, 18, 23, 0.8);
   
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-heading font-semibold text-on-surface tracking-tight;
-  }
+  --primary: #00f2ff;
+  --primary-glow: rgba(0, 242, 255, 0.4);
+  --secondary: #7000ff;
+  --accent: #ff007a;
+  
+  --text-main: #e0e0e6;
+  --text-dim: #9494a3;
+  --text-bright: #ffffff;
+  
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --shadow-neon: 0 0 20px rgba(0, 242, 255, 0.2);
 }
 
-@layer components {
-  .flat-panel {
-    @apply bg-surface border border-surface-border rounded-md shadow-flat;
-  }
-  
-  .primary-btn {
-    @apply bg-primary hover:bg-primary-hover text-on-primary 
-           rounded-md px-4 py-2 font-medium transition-colors duration-200
-           cursor-pointer shadow-flat;
-  }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
-  .secondary-btn {
-    @apply bg-surface hover:bg-surface-highlight text-on-surface border border-surface-border
-           rounded-md px-4 py-2 font-medium transition-colors duration-200
-           cursor-pointer shadow-flat;
-  }
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  overflow-x: hidden;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6, .font-futuristic {
+  font-family: 'Orbitron', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-bright);
+}
+
+/* Sentinel Custom Components */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+}
+
+.btn-sentinel {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  color: var(--bg-deep);
+  border: none;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow-neon);
+}
+
+.btn-sentinel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px var(--primary-glow);
+  filter: brightness(1.2);
+}
+
+.btn-sentinel-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border: 1px solid var(--border-glass);
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.btn-sentinel-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--primary);
+}
+
+/* Agent Specifics */
+.agent-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid var(--primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.agent-badge.active {
+  color: var(--primary);
+  background: rgba(0, 242, 255, 0.05);
+}
+
+.glow-text {
+  text-shadow: 0 0 10px var(--primary-glow);
+}
+
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--primary);
+  box-shadow: 0 0 15px var(--primary);
+  animation: scanning 2s linear infinite;
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes scanning {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
 }

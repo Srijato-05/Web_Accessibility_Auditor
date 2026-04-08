@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { client } from '../api/client';
-import { PieChart, Bug, AlertTriangle, Info, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { PieChart, Bug, AlertTriangle, Info, ArrowLeft, CheckCircle2, Download, Activity, Loader2 } from 'lucide-react';
 
 interface Violation {
   id: string;
@@ -17,6 +17,7 @@ export default function Insights() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const { audit_id } = useParams();
   const navigate = useNavigate();
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     client.get(`/audits/${audit_id || 'global'}/violations`)
@@ -25,6 +26,24 @@ export default function Insights() {
       })
       .catch(console.error);
   }, [audit_id]);
+
+  const handleDownloadPDF = () => {
+    window.location.href = `http://localhost:8000/api/reports/${audit_id}/download`;
+  };
+
+  const handleRegenerate = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    try {
+      await client.post(`/reports/${audit_id}/generate`);
+      alert("Report regenerated successfully.");
+    } catch (err) {
+      console.error(err);
+      alert("Report regeneration failed.");
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   const criticalCount = violations.filter(v => v.severity === 'Critical').length;
   const majorCount = violations.filter(v => v.severity === 'Major').length;
@@ -54,8 +73,28 @@ export default function Insights() {
         <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors mb-6 text-sm font-bold">
            <ArrowLeft size={16} /> Back
         </button>
-        <div className="flex items-center gap-3">
-             <h1 className="text-3xl font-heading font-bold text-on-surface">Audit Insights</h1>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex items-center gap-3">
+               <h1 className="text-3xl font-heading font-bold text-on-surface">Audit Insights</h1>
+          </div>
+          
+          <div className="flex items-center gap-4">
+             <button 
+                onClick={handleRegenerate}
+                disabled={regenerating}
+                className="secondary-btn flex items-center gap-2 text-xs"
+             >
+                {regenerating ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
+                {regenerating ? 'Synthesizing...' : 'Regenerate'}
+             </button>
+             
+             <button 
+                onClick={handleDownloadPDF}
+                className="primary-btn flex items-center gap-2 text-xs"
+             >
+                <Download size={14} /> Download PDF
+             </button>
+          </div>
         </div>
         <p className="text-on-surface-variant mt-2 text-sm">Detailed vulnerability intelligence for audit {audit_id}</p>
       </header>

@@ -39,6 +39,11 @@ class SqlAlchemyAuditRepository(IAuditRepository):
 
     async def save_session(self, session: AuditSession) -> None:
         """Atomic persistence of session state to the database."""
+        # Defensive Schema Alignment
+        if not self._schema_verified:
+            await self._ensure_schema_integrity()
+            self._schema_verified = True
+            
         self.logger.debug(f"Saving Session: {session.id} | Status: {session.status.value}")
         
         try:
@@ -63,6 +68,11 @@ class SqlAlchemyAuditRepository(IAuditRepository):
 
     async def get_session(self, session_id: UUID) -> AuditSession:
         """Retrieval of an audit session from the database."""
+        # Defensive Schema Alignment
+        if not self._schema_verified:
+            await self._ensure_schema_integrity()
+            self._schema_verified = True
+            
         try:
             result = await self.db_session.get(AuditSessionModel, session_id)
             if not result:
@@ -117,6 +127,11 @@ class SqlAlchemyAuditRepository(IAuditRepository):
 
     async def list_recent_sessions(self, limit: int) -> List[AuditSession]:
         """Aggregates the most recent audit sessions from the ledger."""
+        # Defensive Schema Alignment
+        if not self._schema_verified:
+            await self._ensure_schema_integrity()
+            self._schema_verified = True
+            
         try:
             stmt = select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()).limit(limit).options(selectinload(AuditSessionModel.violations))
             result = await self.db_session.exec(stmt)
@@ -157,20 +172,47 @@ class SqlAlchemyAuditRepository(IAuditRepository):
     async def _ensure_schema_integrity(self):
         """Checks for missing columns and performs lightweight migration."""
         try:
-            # PRAGMA check is fast and safe for SQLite
-            res = await self.db_session.exec(select(func.count()).select_from(ViolationModel))
-            # Just a probe to see if it crashes on SELECT * (implicitly done by session.merge later)
-            # But better to use PRAGMA for explicit check
             from sqlalchemy import text # type: ignore
+            
+            # Check violations table
             res = await self.db_session.exec(text("PRAGMA table_info(violations)"))
             columns = [row[1] for row in res.fetchall()]
             if "selector" not in columns:
                 self.logger.warning("SCHEMA MISMATCH: Column 'selector' missing in 'violations'. Migrating...")
                 await self.db_session.exec(text("ALTER TABLE violations ADD COLUMN selector TEXT"))
                 await self.db_session.commit()
-                self.logger.info("Migration SUCCESS: Column 'selector' added.")
+                self.logger.info("Migration SUCCESS: Column 'selector' added to 'violations'.")
+
+            # Check audit_sessions table (Phase XI Enrichment)
+            res = await self.db_session.exec(text("PRAGMA table_info(audit_sessions)"))
+            columns = [row[1] for row in res.fetchall()]
+            
+            if "remediation_plan" not in columns:
+                self.logger.warning("SCHEMA MISMATCH: Column 'remediation_plan' missing in 'audit_sessions'. Migrating...")
+                await self.db_session.exec(text("ALTER TABLE audit_sessions ADD COLUMN remediation_plan TEXT"))
+                await self.db_session.commit()
+                self.logger.info("Migration SUCCESS: Column 'remediation_plan' added.")
+                
+            if "agent_summary" not in columns:
+                self.logger.warning("SCHEMA MISMATCH: Column 'agent_summary' missing in 'audit_sessions'. Migrating...")
+                await self.db_session.exec(text("ALTER TABLE audit_sessions ADD COLUMN agent_summary JSON"))
+                await self.db_session.commit()
+                self.logger.info("Migration SUCCESS: Column 'agent_summary' added.")
+
+            if "focus_path" not in columns:
+                self.logger.warning("SCHEMA MISMATCH: Column 'focus_path' missing in 'audit_sessions'. Migrating...")
+                await self.db_session.exec(text("ALTER TABLE audit_sessions ADD COLUMN focus_path JSON"))
+                await self.db_session.commit()
+                self.logger.info("Migration SUCCESS: Column 'focus_path' added.")
+
+            if "aria_events" not in columns:
+                self.logger.warning("SCHEMA MISMATCH: Column 'aria_events' missing in 'audit_sessions'. Migrating...")
+                await self.db_session.exec(text("ALTER TABLE audit_sessions ADD COLUMN aria_events JSON"))
+                await self.db_session.commit()
+                self.logger.info("Migration SUCCESS: Column 'aria_events' added.")
+
         except Exception as e:
-            self.logger.error(f"Schema integrity check failed or column already exists: {e}")
+            self.logger.error(f"Schema integrity check failed or columns already exist: {e}")
             await self.db_session.rollback()
 
 # --- [ MASSIVE EXPANSION Logic Continued ] ---

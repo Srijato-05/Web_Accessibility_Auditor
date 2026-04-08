@@ -131,6 +131,13 @@ class PlaywrightEngine(IBrowserEngine):
 
     async def start(self):
         """Initializes the persistent playwright and browser instance."""
+        if sys.platform == 'win32':
+            # Cycle 3: Post-Initialization Policy Injection
+            if not isinstance(asyncio.get_event_loop_policy(), asyncio.WindowsProactorEventLoopPolicy):
+                self.logger.warning("Engine Detected Loop Policy Incompatibility. Attempting hot-patch...")
+                try: asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                except: pass
+
         if not self.browser:
             self.logger.info("Starting Persistent Engine Cluster...")
             self.playwright_mgr = await async_playwright().start()
@@ -225,19 +232,19 @@ class PlaywrightEngine(IBrowserEngine):
             # Chrome typically uses a specific header order to form its fingerprint
             # Cycle 3: HTTP/2 Perception Suite (Multiplexed Stealth)
             await context_inst.set_extra_http_headers({
-                "sec-ch-ua": f"\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"{self.profile['clientHints']['uaFullVersion'].split('.')[0]}\", \"Chromium\";v=\"{self.profile['clientHints']['uaFullVersion'].split('.')[0]}\"",
+                "sec-ch-ua": f"\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"122\", \"Chromium\";v=\"122\"",
                 "sec-ch-ua-mobile": "?0",
                 "sec-ch-ua-platform": f"\"{self.profile['clientHints']['platform']}\"",
                 "upgrade-insecure-requests": "1",
                 "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "sec-fetch-site": "none",
+                "sec-fetch-site": "cross-site",
                 "sec-fetch-mode": "navigate",
                 "sec-fetch-user": "?1",
                 "sec-fetch-dest": "document",
                 "accept-encoding": "gzip, deflate, br",
                 "accept-language": "en-US,en;q=0.9",
                 "priority": "u=0, i", # Cycle 3: HTTP/2 priority frame simulation
-                "x-requested-with": "XMLHttpRequest" if random.random() > 0.8 else "" # Occasional XHR mimicry
+                "referer": "https://www.google.com/"
             })
 
             # Phase X: Inject Forensic Probes via Zenith Stealth
@@ -390,8 +397,10 @@ class PlaywrightEngine(IBrowserEngine):
     async def scan_url(self, url: str) -> List[Violation]:
         """
         Autonomous Engine Audit Protocol (AZAP).
+        Includes Persona Rotation for WAF bypass.
         """
         self.telemetry["start_time"] = datetime.now()
+        start_time = time.time()
         
         # Ensure engine is active
         if not self.browser:
@@ -401,27 +410,91 @@ class PlaywrightEngine(IBrowserEngine):
         if not br:
             raise EngineError("Engine Cluster Failure: Browser offline.")
             
-        try:
-            local_context = await br.new_context(
-                viewport=self.profile['viewport'],
-                user_agent=self.profile['userAgent'],
-                java_script_enabled=True,
-                bypass_csp=True
-            )
-            # Re-inject stealth for this context
-            stealth_js = StealthProtocol.get_injection_script(self.profile)
-            await local_context.add_init_script(stealth_js)
-            await self._inject_zenith_stealth(local_context, self.profile)
-            
-            page = await local_context.new_page()
+        MAX_PERSONAS = 3 # Desktop -> Mobile -> Headful
+        current_attempt = 1
+        
+        while current_attempt <= MAX_PERSONAS:
+            local_context = None
+            page = None
             try:
+                # Attempt 2: Switch to Mobile Persona
+                if current_attempt == 2:
+                    self.logger.warning(f"PERSONA ROTATION: Attempt {current_attempt} using Mobile Persona...")
+                    mobile_profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Mobile" in p["name"]), self.profile)
+                    self.profile = mobile_profile
+                
+                # Attempt 3: Switch to Headful (with Headless fallback)
+                if current_attempt == 3:
+                    self.logger.critical(f"FINAL BREACH: Attempt {current_attempt} engaging Headful Mode...")
+                    try:
+                        if self.browser:
+                            await self.browser.close()
+                        self.headless = False
+                        await self.start()
+                    except Exception as he:
+                        self.logger.warning(f"Headful Launch Failure: {he}. Falling back to Extreme Stealth Headless...")
+                        self.headless = True
+                        await self.start()
+                    
+                    br = self.browser # Refresh reference
+                    self.profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Windows-Chrome" in p["name"]), self.profile)
+
+                local_context = await br.new_context(
+                    viewport=self.profile['viewport'],
+                    user_agent=self.profile['userAgent'],
+                    java_script_enabled=True,
+                    bypass_csp=False, # Disable CSP bypass (sometimes detected)
+                    extra_http_headers={
+                        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"123\", \"Chromium\";v=\"123\"",
+                        "sec-ch-ua-full-version-list": "\"Not A(Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"123.0.6312.52\", \"Chromium\";v=\"123.0.6312.52\"",
+                        "sec-ch-ua-mobile": "?0",
+                        "sec-ch-ua-platform": "\"Windows\"",
+                        "sec-ch-ua-platform-version": "\"10.0.0\"",
+                        "referer": "https://www.google.com/"
+                    }
+                )
+                
+                # Re-inject stealth for this context
+                stealth_js = StealthProtocol.get_injection_script(self.profile)
+                await local_context.add_init_script(stealth_js)
+                await self._inject_zenith_stealth(local_context, self.profile)
+                
+                page = await local_context.new_page()
+                
                 # 1. Smart Timeout Adaptation
                 timeout = await self._get_dynamic_timeout(page, url)
                 
                 # 2. Navigation with Stealth
-                self.logger.info(f"Navigating Mission Target: {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+                self.logger.info(f"Navigating Mission Target: {url} (via Stealth Referer/Attempt {current_attempt})")
+                await page.goto(
+                    url, 
+                    wait_until="domcontentloaded", 
+                    timeout=timeout,
+                    referer="https://www.google.com/"
+                )
+                
+                # Cognitive Delay (Mimic reading time)
+                if current_attempt >= 2:
+                    self.logger.info(f"Stealth Phase IX: Executing {10}s Cognitive Pause...")
+                    await asyncio.sleep(10.0)
+                    
                 await self._stabilize_dom(page)
+                
+                # Check for zero content (Next.js hydration safe-check)
+                link_count = await page.evaluate("() => document.querySelectorAll('a').length")
+                if link_count == 0:
+                    title = await page.title()
+                    if "access denied" in title.lower() or "forbidden" in title.lower():
+                        if current_attempt < MAX_PERSONAS:
+                            self.logger.critical(f"ENGINE BLOCK DETECTED: CDN/WAF rejected the stealth profile for {url} on attempt {current_attempt}. Retrying with rotation...")
+                            raise AuditFailedError("WAF Block detected")
+                        else:
+                            self.logger.critical(f"FATAL BLOCK: All personas failed for {url}.")
+                            raise EngineError(f"Irrecoverable WAF Block on {url} after persona rotation.")
+                        
+                    self.logger.warning(f"Engine Detection: Empty DOM detected for {url}. Initiating Emergency Hydration Wait...")
+                    await asyncio.sleep(5.0)
+                    await self._stabilize_dom(page)
 
                 # Phase XI: High-Density Focus-Path Simulation (30+ nodes)
                 self.logger.debug("Simulating High-Density Keyboard Navigation...")
@@ -429,25 +502,24 @@ class PlaywrightEngine(IBrowserEngine):
                     await page.keyboard.press("Tab")
                     await asyncio.sleep(0.05) # High-speed sweep
 
-                # Phase XI: Infinite Scroll Zone Auditing
-                await self._trigger_infinite_scroll_buffer(page)
-
-                # 3. Analytical Protocol [ZAP-V5]
-                self.logger.info("Executing Engine Analytical Protocol [ZAP-V5]...")
-                start_time = time.time()
-                
+                # 4. Critical Accessibility Analysis (Axe)
+                self.logger.info("Executing Autonomous Accessibility Forensics...")
                 axe = Axe()
-                try:
-                    # Cycle 12: High-Fidelity Timeout Protection
-                    results = await asyncio.wait_for(axe.run(page), timeout=120)
-                    axe_violations = self._map_results(results)
-                except asyncio.TimeoutError:
-                    self.logger.error(f"Engine Analytical Timeout [ZAP-V5]: Analysis at {url} exceeded 120s.")
-                    axe_violations = []
-
+                results = await axe.run(page) # type: ignore
+                
+                # AxeResults object mapping (Fixes AttributeError)
+                if hasattr(results, 'violations'):
+                    axe_violations = results.violations
+                elif isinstance(results, dict):
+                    axe_violations = results.get("violations", [])
+                else:
+                    # Robust fallback for custom objects/NamedTuples
+                    axe_violations = getattr(results, 'violations', [])
+                
                 # Cycle 14: Neural Data Extraction for Agents
                 try:
                     self.logger.info("Executing Neural Data Extraction [ZET-X1]...")
+                    from auditor.infrastructure.data_extractor import extract_page_data
                     self.page_data = await extract_page_data(
                         page, 
                         self.session_id, 
@@ -455,20 +527,13 @@ class PlaywrightEngine(IBrowserEngine):
                     )
                 except Exception as ee:
                     self.logger.warning(f"Neural Extraction Failure [ZET-X1]: {ee}")
-                
-                # 4. Proprietary Forensic Clusters
-                # Skip forensics if main analysis timed out (prevents TargetClosedError race)
+
                 custom_v = []
-                if axe_violations or not isinstance(axe_violations, list): 
-                    # If we have violations or a timeout occurred but we want to try forensics
-                    # Actually, let's just try forensics if it didn't timeout
-                    pass
-                
                 if isinstance(axe_violations, list):
                     try:
                         custom_v = await self._run_proprietary_heuristics(page)
                     except Exception as he:
-                        self.logger.warning(f"Forensic Cluster minor failure (Target likely frozen): {he}")
+                        self.logger.warning(f"Forensic Cluster minor failure: {he}")
                 
                 # 5. Synthesis & Telemetry
                 all_violations = axe_violations + custom_v
@@ -477,17 +542,19 @@ class PlaywrightEngine(IBrowserEngine):
                 
                 return all_violations
                 
+            except AuditFailedError as e:
+                if "WAF Block" in str(e) and current_attempt < MAX_PERSONAS:
+                    current_attempt += 1
+                    if page: await page.close()
+                    if local_context: await local_context.close()
+                    continue
+                raise
             except (PlaywrightError, asyncio.TimeoutError) as pe:
                 self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}")
-                # Do NOT snapshot on TargetClosedError
-                if "closed" not in str(pe).lower():
-                    try:
-                        await self.capture_debug_snapshot(page, "protocol_failure")
-                    except: pass
-                raise AuditFailedError(f"Audit failed for {url}: {pe}")
+                raise EngineError(f"Audit failed for {url}: {pe}")
             except Exception as e:
                 self.logger.critical(f"FATAL Engine Anomaly at {url}: {e}", exc_info=True)
-                raise AuditFailedError(f"Audit failed for {url}: {e}")
+                raise EngineError(f"Audit failed for {url}: {e}")
             finally:
                 if page:
                     try: 
@@ -497,13 +564,9 @@ class PlaywrightEngine(IBrowserEngine):
                 if local_context:
                     try:
                         await local_context.close()
-                    except Exception:
-                        pass
-        except Exception as outer_e:
-            self.logger.error(f"Global Protocol Error: {outer_e}")
-            raise AuditFailedError(f"Global audit failure: {outer_e}")
+                    except: pass
         
-        return [] # Final Path Safety
+        return []
 
     async def _get_dynamic_timeout(self, page: Page, url: str) -> int:
         """Adapts timeout based on hardware load and domain profile."""
@@ -537,7 +600,17 @@ class PlaywrightEngine(IBrowserEngine):
                 await asyncio.sleep(random.uniform(0.5, 1.5))
             
             # 3. Cognitive Pause & Load Verification
-            await page.wait_for_load_state("networkidle", timeout=30000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                self.logger.warning("Networkidle wait timed out - proceeding with partial load.")
+            
+            # Phase XII: Content Verification
+            has_links = await page.evaluate("() => document.querySelectorAll('a, button').length > 0")
+            if not has_links:
+                self.logger.info("Content missing after load. Waiting for Next.js/React hydration...")
+                await asyncio.sleep(3.0)
+            
             await asyncio.sleep(random.uniform(1.0, 2.5))
             
             # 4. Return to Baseline
@@ -545,6 +618,8 @@ class PlaywrightEngine(IBrowserEngine):
             await asyncio.sleep(1.0)
         except Exception as e:
             self.logger.warning(f"Stealth Stabilization minor failure: {e}")
+            # Ensure we give it AT LEAST some time if things go wrong
+            await asyncio.sleep(2.0)
 
     async def _trigger_infinite_scroll_buffer(self, page: Page):
         """Simulates infinite scroll to trigger lazy-loaded accessibility zones."""
