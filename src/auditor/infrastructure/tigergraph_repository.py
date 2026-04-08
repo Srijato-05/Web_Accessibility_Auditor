@@ -91,10 +91,10 @@ class TigerGraphRepository:
                     ),
                     timeout=5.0
                 )
-        except asyncio.TimeoutError:
-            self.logger.warning("TigerGraph API Timeout: Component upsert skipped.")
-        except Exception as e:
-            self.logger.error(f"Async Component Error: {type(e).__name__} - {e}")
+            except asyncio.TimeoutError:
+                self.logger.warning("TigerGraph API Timeout: Component upsert skipped.")
+            except Exception as e:
+                self.logger.error(f"Async Component Error: {type(e).__name__} - {e}")
 
     def _upsert_component_violation_sync(self, page_url, violation: Violation, node_html):
         try:
