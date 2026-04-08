@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { client } from '../api/client';
-import { PieChart, Bug, AlertTriangle, Info, ArrowLeft, CheckCircle2, Download, Activity, Loader2 } from 'lucide-react';
+import { PieChart, ArrowLeft, Download, Activity, Loader2 } from 'lucide-react';
 
 interface Violation {
   id: string;
@@ -11,20 +11,48 @@ interface Violation {
   category: string;
 }
 
-const ALL_CATEGORIES = ["Color & Contrast", "ARIA & Semantics", "Keyboard Navigation", "Structure"];
+// Forensic Categories decommissioned in favor of Advice Hub
 
 export default function Insights() {
   const [violations, setViolations] = useState<Violation[]>([]);
+  const [recentScans, setRecentScans] = useState<any[]>([]);
   const { audit_id } = useParams();
   const navigate = useNavigate();
   const [regenerating, setRegenerating] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<string>('loading');
+  const [remediationPlan, setRemediationPlan] = useState<string>('');
 
   useEffect(() => {
-    client.get(`/audits/${audit_id || 'global'}/violations`)
-      .then(res => {
-         setViolations(res.data);
-      })
-      .catch(console.error);
+    if (!audit_id) return;
+    
+    let interval: any;
+    
+    const fetchAllData = async () => {
+      try {
+        const res = await client.get(`/sessions/${audit_id}`);
+        setSessionStatus(res.data.status);
+        setRemediationPlan(res.data.remediation_plan || '');
+        setViolations(res.data.violations || []);
+        
+        if (res.data.status === 'completed' || res.data.status === 'failed') {
+          clearInterval(interval);
+        }
+      } catch (e) {
+        console.error("Data fetch failed", e);
+      }
+    };
+
+    const fetchSummary = () => {
+       client.get('/dashboard/summary')
+         .then(res => setRecentScans(res.data.recent_scans || []))
+         .catch(e => console.error(e));
+    };
+
+    fetchAllData();
+    fetchSummary();
+    interval = setInterval(fetchAllData, 3000); 
+
+    return () => clearInterval(interval);
   }, [audit_id]);
 
   const handleDownloadPDF = () => {
@@ -48,6 +76,9 @@ export default function Insights() {
   const criticalCount = violations.filter(v => v.severity === 'Critical').length;
   const majorCount = violations.filter(v => v.severity === 'Major').length;
   const minorCount = violations.filter(v => v.severity === 'Minor').length;
+  
+  const agentCount = violations.filter(v => v.type && v.type.startsWith('AGENT-')).length;
+  const standardCount = violations.length - agentCount;
 
   const total = violations.length || 1;
 
@@ -55,10 +86,8 @@ export default function Insights() {
   const majorPct = (majorCount / total) * 100;
   const minorPct = (minorCount / total) * 100;
 
-  const impactIcon = (severity: string) => {
-    if (severity === 'Critical') return <Bug size={16} className="text-error" />;
-    if (severity === 'Major') return <AlertTriangle size={16} className="text-warning" />;
-    return <Info size={16} className="text-secondary" />;
+  const impactIcon = (_severity: string) => {
+    return null;
   };
 
   const impactColor = (severity: string) => {
@@ -96,7 +125,17 @@ export default function Insights() {
              </button>
           </div>
         </div>
-        <p className="text-on-surface-variant mt-2 text-sm">Detailed vulnerability intelligence for audit {audit_id}</p>
+        <p className="text-on-surface-variant mt-2 text-sm">High-fidelity forensic report for session {audit_id}</p>
+        
+        {sessionStatus !== 'completed' && sessionStatus !== 'failed' && (
+          <div className="mt-6 p-4 bg-primary/10 border border-primary/20 rounded-md flex items-center justify-between animate-pulse">
+            <div className="flex items-center gap-3 text-primary">
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-sm font-bold uppercase tracking-widest">Mission Context: {sessionStatus.replace('_', ' ')}</span>
+            </div>
+            <span className="text-[10px] text-primary/70 font-mono">Engaging Specialized Forensic Agents...</span>
+          </div>
+        )}
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
@@ -111,18 +150,21 @@ export default function Insights() {
                   <div className="bg-secondary transition-all" style={{width: `${minorPct}%`}}></div>
                </div>
                
-               <div className="space-y-4">
-                  <div className="flex justify-between items-center text-sm">
-                     <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-error"></span> Critical</span>
-                     <span className="font-heading font-medium">{criticalCount}</span>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-primary/10 border border-primary/30 rounded-lg">
+                     <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 rounded-full bg-primary animate-pulse"></div>
+                        <span className="text-sm font-bold uppercase tracking-wider text-primary">Agentic Findings</span>
+                     </div>
+                     <span className="text-2xl font-heading font-bold text-primary">{agentCount}</span>
                   </div>
-                  <div className="flex justify-between items-center text-sm">
-                     <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-warning"></span> Major</span>
-                     <span className="font-heading font-medium">{majorCount}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                     <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-secondary"></span> Minor</span>
-                     <span className="font-heading font-medium">{minorCount}</span>
+                  
+                  <div className="flex items-center justify-between p-4 bg-surface-highlight border border-surface-border rounded-lg">
+                     <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 rounded-full bg-on-surface-variant/40"></div>
+                        <span className="text-sm font-bold uppercase tracking-wider text-on-surface-variant">Axe Engine findings</span>
+                     </div>
+                     <span className="text-2xl font-heading font-bold text-on-surface">{standardCount}</span>
                   </div>
                </div>
            </div>
@@ -136,59 +178,7 @@ export default function Insights() {
         </div>
       </div>
 
-      <div className="flat-panel overflow-hidden mt-8">
-         <div className="p-6 border-b border-surface-border">
-            <h2 className="text-lg font-bold text-on-surface">Violations Log</h2>
-         </div>
-         <div className="w-full p-6 space-y-8 bg-surface-highlight/30">
-            {ALL_CATEGORIES.map(category => {
-               const cats = violations.filter(v => v.category === category);
-               
-               if (cats.length === 0) {
-                  return (
-                     <div key={category} className="mb-2">
-                        <h3 className="text-sm uppercase tracking-widest font-bold text-on-surface-variant mb-4">{category}</h3>
-                        <div className="bg-surface rounded-md border border-surface-border p-4 flex items-center justify-between shadow-flat">
-                           <div className="flex items-center gap-3">
-                              <div className="bg-secondary/10 text-secondary p-2 rounded"><CheckCircle2 size={16} /></div>
-                              <span className="text-on-surface-variant text-sm font-medium">Validation Passed (100% Compliant)</span>
-                           </div>
-                           <span className="text-secondary text-xs uppercase tracking-widest font-bold border border-secondary/20 px-2 py-1 rounded bg-secondary/5">CLEARED</span>
-                        </div>
-                     </div>
-                  );
-               }
-
-               return (
-                  <div key={category}>
-                     <h3 className="text-sm uppercase tracking-widest font-bold text-on-surface-variant mb-4">{category}</h3>
-                     <div className="space-y-3">
-                        {cats.map((v, idx) => (
-                           <div key={idx} className="bg-surface rounded-md border border-surface-border overflow-hidden group hover:border-primary/50 transition-all shadow-flat">
-                              <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                 <div className="flex items-start md:items-center gap-4">
-                                    <div className={`p-2 rounded-md border flex-shrink-0 ${impactColor(v.severity)}`}>
-                                       {impactIcon(v.severity)}
-                                    </div>
-                                    <div>
-                                       <h3 className="font-medium text-on-surface mb-1">{v.type}</h3>
-                                       <p className="text-sm text-on-surface-variant leading-relaxed tracking-wide">{v.message}</p>
-                                    </div>
-                                 </div>
-                                 <button 
-                                    onClick={() => navigate(`/insights/${audit_id || 'global'}/issue/${v.id}`)}
-                                    className="text-xs font-bold uppercase tracking-widest text-primary md:opacity-0 group-hover:opacity-100 transition-all cursor-pointer bg-primary/10 px-4 py-2 rounded-md hover:bg-primary hover:text-on-primary flex-shrink-0 border border-primary/20">
-                                    Investigate
-                                 </button>
-                              </div>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-               );
-            })}
-         </div>
-      </div>
+      {/* Bottom section removed per user request */}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { client } from '../api/client';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ArrowLeft, AlertTriangle, Loader2, GitMerge } from 'lucide-react';
+import { ArrowLeft, Loader2, GitMerge } from 'lucide-react';
 
 interface ViolationDetail {
   id: string;
@@ -40,9 +40,6 @@ export default function IssueDetail() {
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
            <div>
                <div className="flex items-center gap-3 mb-2">
-                  <div className="bg-error-bg text-error p-2 rounded-md border border-error/20">
-                     <AlertTriangle size={24} />
-                  </div>
                   <h1 className="text-3xl font-heading font-bold capitalize text-on-surface">{data.rule_id}</h1>
                </div>
                <p className="text-on-surface-variant mt-2 max-w-2xl text-sm leading-relaxed">{data.description}</p>

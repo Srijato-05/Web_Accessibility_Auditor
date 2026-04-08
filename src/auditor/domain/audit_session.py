@@ -32,6 +32,10 @@ class AuditSession:
     focus_path: List[Dict[str, Any]] = field(default_factory=list)
     aria_events: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Phase X: Reporting Metadata
+    agent_summary: Dict[str, Any] = field(default_factory=dict)
+    remediation_plan: str = ""
+
     def start(self):
         if self.status != SessionStatus.CREATED:
             raise ValueError(f"Cannot start session in status: {self.status}")

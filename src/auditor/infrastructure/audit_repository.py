@@ -58,7 +58,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     completed_at=session.completed_at,
                     error_message=session.error_message,
                     focus_path=session.focus_path,
-                    aria_events=session.aria_events
+                    aria_events=session.aria_events,
+                    agent_summary=session.agent_summary,
+                    remediation_plan=session.remediation_plan
                 )
                 await self.db_session.merge(model)
                 await self.db_session.commit()
@@ -74,7 +76,10 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self._schema_verified = True
             
         try:
-            result = await self.db_session.get(AuditSessionModel, session_id)
+            from sqlmodel import select
+            statement = select(AuditSessionModel).where(AuditSessionModel.id == session_id).options(selectinload(AuditSessionModel.violations))
+            results = await self.db_session.exec(statement)
+            result = results.first()
             if not result:
                 raise RepositoryError(f"Session {session_id} not found.")
             
@@ -86,7 +91,21 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                 updated_at=result.updated_at,
                 started_at=result.started_at,
                 completed_at=result.completed_at,
-                error_message=result.error_message
+                error_message=result.error_message,
+                agent_summary=result.agent_summary or {},
+                remediation_plan=result.remediation_plan or "",
+                violations=[
+                    Violation(
+                        rule_id=v.rule_id,
+                        impact=ImpactLevel(v.impact),
+                        description=v.description,
+                        help_url=v.help_url,
+                        selector=v.selector or "",
+                        nodes=v.nodes or [],
+                        tags=v.tags or [],
+                        session_id=v.session_id
+                    ) for v in result.violations
+                ]
             )
         except Exception as e:
             self.logger.error(f"Database Retrieval Anomaly [Session {session_id}]: {e}")

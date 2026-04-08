@@ -1,10 +1,8 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Clock, Shield } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Shield } from 'lucide-react';
 
 export default function Navbar() {
   const location = useLocation();
-
-  if (location.pathname === '/') return null;
 
   const isActive = (path: string) => 
     location.pathname === path ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface';
@@ -19,17 +17,13 @@ export default function Navbar() {
               <span className="font-heading font-bold text-lg hidden sm:block tracking-tight text-on-surface">Sentinel</span>
             </div>
             <div className="ml-8 flex space-x-8">
-              <Link to="/dashboard" className={`inline-flex items-center px-1 pt-1 text-sm font-medium transition-colors ${isActive('/dashboard')}`}>
-                <LayoutDashboard className="mr-2" size={18} />
-                Dashboard
-              </Link>
               <Link to="/scan" className={`inline-flex items-center px-1 pt-1 text-sm font-medium transition-colors ${isActive('/scan')}`}>
                 <ScanLine className="mr-2" size={18} />
                 New Scan
               </Link>
-              <Link to="/history" className={`inline-flex items-center px-1 pt-1 text-sm font-medium transition-colors ${isActive('/history')}`}>
-                <Clock className="mr-2" size={18} />
-                History
+              <Link to="/dashboard" className={`inline-flex items-center px-1 pt-1 text-sm font-medium transition-colors ${isActive('/dashboard')}`}>
+                <LayoutDashboard className="mr-2" size={18} />
+                Dashboard
               </Link>
             </div>
           </div>

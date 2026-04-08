@@ -31,8 +31,8 @@ export default function ScanScreen() {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-20 pb-32 flex flex-col items-center justify-center min-h-[calc(100vh-64px)]">
       <div className="text-center mb-10 w-full">
-        <h1 className="text-4xl font-heading font-bold text-on-surface mb-3">Audit a specific URL</h1>
-        <p className="text-on-surface-variant font-body">Ensure your deployment meets the latest WCAG parameters.</p>
+        <h1 className="text-4xl font-heading font-bold text-on-surface mb-3">Target Initialization</h1>
+        <p className="text-on-surface-variant font-body">Execute forensic high-precision scan on secondary targets.</p>
       </div>
 
       <div className="w-full">

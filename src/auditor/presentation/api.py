@@ -24,15 +24,13 @@ from auditor.infrastructure.pdf_reporter import convert_json_to_pdf # type: igno
 import glob
 from urllib.parse import urlparse
 
+from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT
 router = APIRouter()
 
-# Use absolute path to ensure DB is in the root 'reports' folder regardless of working directory
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
-DATABASE_PATH = os.path.join(REPORTS_DIR, "data", "audit_results.db")
-DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
+# Global Path Legacy Support
+BASE_DIR = str(PROJECT_ROOT)
 
-os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+# Unified Database Configuration
 engine = create_async_engine(DATABASE_URL, echo=False)
 
 async def init_db():
@@ -55,7 +53,7 @@ async def async_run_audit_worker(url: str):
             if session and session.status.value == "completed":
                 try:
                     # Reconciliation for reports layout
-                    reports_out = os.path.join(REPORTS_DIR, "exports")
+                    reports_out = str(EXPORTS_DIR)
                     
                     # 1. Identify JSON findings exported by agents
                     short_id = str(session.id)[:8] # type: ignore
@@ -130,6 +128,15 @@ async def get_dashboard_summary():
                     else:
                         total_minor += 1 # type: ignore
 
+        # Tally Agentic Missions
+        agent_counts = {"visual": 0, "motor": 0, "cognitive": 0, "neural": 0}
+        for s in recent:
+            if hasattr(s, 'agent_summary') and s.agent_summary:
+                agent_counts["visual"] += s.agent_summary.get("visual_count", 0)
+                agent_counts["motor"] += s.agent_summary.get("motor_count", 0)
+                agent_counts["cognitive"] += s.agent_summary.get("cognitive_count", 0)
+                agent_counts["neural"] += s.agent_summary.get("neural_count", 0)
+
         # Build recent_scans list with the shape Dashboard.tsx needs
         recent_scans = []
         for s in recent[:5]:
@@ -160,6 +167,11 @@ async def get_dashboard_summary():
             "recent_scans": recent_scans,
             "network_propagation": "TigerGraph Connected" if total_critical >= 0 else "Disconnected",
             "ai_confidence": "97%",
+            "agent_insights": {
+                "total_missions": len(recent),
+                "breakdown": agent_counts,
+                "neural_active": agent_counts["neural"] > 0
+            }
         }
 
 @router.get("/audits/{audit_id}/violations")
@@ -370,7 +382,8 @@ async def get_history():
                 "url": s.target_url, 
                 "date": s.started_at.isoformat() if s.started_at else datetime.datetime.now().isoformat(), 
                 "issues": len(s.violations) if s.violations else 0,
-                "status": s.status.value
+                "status": s.status.value,
+                "agent_summary": s.agent_summary
             } for s in recent
         ]
 
@@ -415,7 +428,7 @@ async def get_session(session_id: str):
 
 @router.get("/reports/{session_id}/download")
 async def download_report(session_id: str, background_tasks: BackgroundTasks):
-    reports_out = os.path.join(BASE_DIR, "reports", "exports")
+    reports_out = str(EXPORTS_DIR)
     
     # Try finding the PDF by session ID prefix
     short_id = str(session_id)[:8] # type: ignore

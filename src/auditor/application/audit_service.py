@@ -30,11 +30,8 @@ from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
-from auditor.application.agents.controller import AgentController
-from auditor.application.agents.visual_agent import VisualAgent
-from auditor.application.agents.motor_agent import MotorAgent
-from auditor.application.agents.cognitive_agent import CognitiveAgent
-# from auditor.application.agents.neural_agent import NeuralAgent # Moved to local scope for lazy loading
+from auditor.application.agent_service import get_agent_service # type: ignore
+from auditor.shared.paths import EXPORTS_DIR
 
 class AuditService:
     """
@@ -143,13 +140,15 @@ class AuditService:
             if hasattr(engine, 'page_data') and engine.page_data:
                 try:
                     self.logger.info(f"Engaging Specialized Accessibility Agents: Visual, Motor, Cognitive, Neural...")
-                    from auditor.application.agents.neural_agent import NeuralAgent
-                    agents = [VisualAgent(), MotorAgent(), CognitiveAgent()]
-                    if not skip_neural:
-                        agents.append(NeuralAgent())
+                    agent_service = get_agent_service()
+                    controller = await agent_service.get_controller()
+                    
+                    # Filter agents if skip_neural is requested
+                    include = None
+                    if skip_neural:
+                        include = ['visual', 'motor', 'cognitive']
                         
-                    controller = AgentController(agents)
-                    agent_findings = await controller.analyze(engine.page_data)
+                    agent_findings = await controller.analyze(engine.page_data, include_agents=include)
                     
                     # Cycle 12: Knowledge persistence for PDF/Stakeholder Reporting
                     controller.export_findings(agent_findings, str(session.id), url)
@@ -161,14 +160,15 @@ class AuditService:
                             rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
                             impact=ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE,
                             description=f"[{af.agent.upper()} AGENT] {af.issue} (Confidence: {af.confidence}). Fix Recommended: {af.fix}",
-                            help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}"
+                            help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}",
+                            session_id=session.id # type: ignore
                         )
                         v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue}]
                         v.selector = af.selector
                         violations.append(v)
                     
                     # Store high-level agent summary in the session metadata
-                    session.agent_summary = {
+                    session.agent_summary = { # type: ignore
                         "visual_count": len([af for af in agent_findings if af.agent == 'visual']),
                         "motor_count": len([af for af in agent_findings if af.agent == 'motor']),
                         "cognitive_count": len([af for af in agent_findings if af.agent == 'cognitive']),
@@ -182,11 +182,17 @@ class AuditService:
             # -------------------------------------
 
             # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
+            # Parallelize structural telemetry to avoid blocking the forensic path
+            tg_tasks = []
             for v in violations:
-                for node in v.nodes:
+                for node in v.nodes: # type: ignore
                     html_snippet = str(node.get("html", ""))
                     if html_snippet:
-                        await self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
+                        tg_tasks.append(
+                            asyncio.create_task(
+                                self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
+                            )
+                        )
             # -------------------------------------
 
             # PHASE 4: PERSISTENCE
@@ -195,11 +201,11 @@ class AuditService:
                 await self.repository.save_violations(violations)
                 
                 # Update Session State
-                session.complete()
+                session.complete() # type: ignore
                 
                 # Capture remediation plan in DB for frontend Intelligence Link
                 try:
-                    session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations))
+                    session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations)) # type: ignore
                 except:
                     pass
                     
@@ -208,7 +214,7 @@ class AuditService:
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
                 try:
                     remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations))
-                    export_path = f"reports/exports/remediation_{session.id}.md"
+                    export_path = os.path.join(str(EXPORTS_DIR), f"remediation_{session.id}.md") # type: ignore
                     os.makedirs(os.path.dirname(export_path), exist_ok=True)
                     with open(export_path, "w", encoding="utf-8") as f:
                         f.write(remediation_plan)

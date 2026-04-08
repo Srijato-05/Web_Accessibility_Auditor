@@ -13,10 +13,7 @@ import os
 import sys
 import json
 
-# IDE PATH RECONCILIATION: Ensuring import stability for external scripts
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _root not in sys.path:
-    sys.path.insert(0, _root)
+from auditor.shared.paths import EXPORTS_DIR
 
 from datetime import datetime
 from typing import Dict, Any
@@ -37,8 +34,10 @@ class AuditReporter:
         self.session = session
         self.logger = auditor_logger.getChild("Reporter")
 
-    async def generate_summary_report(self, session_id: Any = None, output_dir: str = "reports/exports") -> Dict[str, str]:
+    async def generate_summary_report(self, session_id: Any = None, output_dir: str = None) -> Dict[str, str]:
         """Generates both HTML and JSON reports for a specific session (or latest if None)."""
+        if output_dir is None:
+            output_dir = str(EXPORTS_DIR)
         os.makedirs(output_dir, exist_ok=True)
         
         # 1. Fetch Targeted Session

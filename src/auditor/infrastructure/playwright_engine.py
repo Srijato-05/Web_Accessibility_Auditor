@@ -465,13 +465,21 @@ class PlaywrightEngine(IBrowserEngine):
                 timeout = await self._get_dynamic_timeout(page, url)
                 
                 # 2. Navigation with Stealth
-                self.logger.info(f"Navigating Mission Target: {url} (via Stealth Referer/Attempt {current_attempt})")
+                # Adaptive Wait State: Relax to 'commit' on retries to bypass navigation hangs
+                wait_state = "domcontentloaded" if current_attempt == 1 else "commit"
+                
+                self.logger.info(f"Navigating Mission Target: {url} (Wait: {wait_state} | Attempt: {current_attempt})")
                 await page.goto(
                     url, 
-                    wait_until="domcontentloaded", 
+                    wait_until=wait_state, # type: ignore
                     timeout=timeout,
                     referer="https://www.google.com/"
                 )
+                
+                if wait_state == "commit":
+                    # If we only waited for commit, give the DOM some extra time to breathe
+                    self.logger.info("Resilient Navigation: Executing 5s Structural Hydration Wait...")
+                    await asyncio.sleep(5.0)
                 
                 # Cognitive Delay (Mimic reading time)
                 if current_attempt >= 2:
@@ -570,12 +578,19 @@ class PlaywrightEngine(IBrowserEngine):
 
     async def _get_dynamic_timeout(self, page: Page, url: str) -> int:
         """Adapts timeout based on hardware load and domain profile."""
-        base_timeout = 60000 # Increased base for heavy Gov portals
+        base_timeout = 60000 
+        
+        # Resilient Tier: Increase base for Gov portals or known high-latency domains
+        if any(gov in url.lower() for gov in [".gov.in", ".nic.in", ".gov", "india.gov.in"]):
+            base_timeout = 90000
+            self.logger.info(f"Target identified as High-Latency Portal. Scaling mission timeout to {base_timeout}ms.")
+
         import psutil # type: ignore
         cpu = psutil.cpu_percent()
         if cpu > 80:
-            base_timeout = 120000
-            self.logger.warning(f"Engine Stress Detected [{cpu}%]. Scaling timeout to 120s.")
+            base_timeout = max(base_timeout, 120000)
+            self.logger.warning(f"Engine Stress Detected [{cpu}%]. Scaling mission timeout to {base_timeout}ms.")
+            
         return base_timeout
 
     # --------------------------------------------------------------------------

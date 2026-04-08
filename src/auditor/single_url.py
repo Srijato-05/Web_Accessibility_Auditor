@@ -16,6 +16,7 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # Extreme Registry Imports
+# Extreme Registry Imports
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
 from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
 from auditor.infrastructure.playwright_engine import PlaywrightEngine
@@ -23,11 +24,7 @@ from auditor.application.audit_service import AuditService
 from auditor.application.reporter import AuditReporter
 from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
 from auditor.shared.logging import auditor_logger
-
-# Path Reconciliation for Reports Base
-_base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-REPORTS_DIR = os.path.join(_base, "reports")
-DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(REPORTS_DIR, 'data', 'audit_results.db')}"
+from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT
 
 async def main():
     # 1. CLI Argument Handling
@@ -98,8 +95,7 @@ if __name__ == "__main__":
             from urllib.parse import urlparse
             url = sys.argv[1]
             
-            _base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            reports_out = os.path.join(_base, "reports", "exports")
+            reports_out = str(EXPORTS_DIR)
             
             # Match patterns
             findings_pattern = os.path.join(reports_out, f"agent_findings_{str(session_id)[:8]}_*.json")
