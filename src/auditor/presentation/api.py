@@ -462,7 +462,8 @@ async def download_report(session_id: str, background_tasks: BackgroundTasks):
     return FileResponse(
         path=latest_pdf,
         filename=os.path.basename(latest_pdf),
-        media_type='application/pdf'
+        media_type='application/pdf',
+        content_disposition_type="inline"
     )
 
 @router.post("/reports/{session_id}/generate")

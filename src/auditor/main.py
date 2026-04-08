@@ -25,7 +25,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
 app.include_router(api_router, prefix="/api")
+
+# Mount reports/exports for direct linking
+_base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+reports_path = os.path.join(_base, "reports", "exports")
+os.makedirs(reports_path, exist_ok=True)
+app.mount("/reports", StaticFiles(directory=reports_path), name="reports")
 
 @app.get("/")
 def read_root():

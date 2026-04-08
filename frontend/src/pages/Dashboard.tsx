@@ -119,7 +119,7 @@ export default function Dashboard() {
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    window.location.href = `http://localhost:8000/api/reports/${log.id}/download`;
+                                    window.open(`http://localhost:8000/api/reports/${log.id}/download`, '_blank');
                                   }}
                                   className="p-2 hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all group/btn"
                                   title="Download Remediation PDF"

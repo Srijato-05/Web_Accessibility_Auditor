@@ -28,7 +28,7 @@ export default function Insights() {
   }, [audit_id]);
 
   const handleDownloadPDF = () => {
-    window.location.href = `http://localhost:8000/api/reports/${audit_id}/download`;
+    window.open(`http://localhost:8000/api/reports/${audit_id}/download`, '_blank');
   };
 
   const handleRegenerate = async () => {
