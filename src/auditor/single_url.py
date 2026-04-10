@@ -2,9 +2,9 @@ import asyncio
 import sys
 import os
 import uuid
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
+from sqlmodel import SQLModel # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
 # IDE PATH RECONCILIATION: Redundant path hinting for static analysis
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -17,14 +17,14 @@ if sys.platform == 'win32':
 
 # Extreme Registry Imports
 # Extreme Registry Imports
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
-from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
-from auditor.infrastructure.playwright_engine import PlaywrightEngine
-from auditor.application.audit_service import AuditService
-from auditor.application.reporter import AuditReporter
-from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
-from auditor.shared.logging import auditor_logger
-from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
+from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
+from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
+from auditor.application.audit_service import AuditService # type: ignore
+from auditor.application.reporter import AuditReporter # type: ignore
+from auditor.infrastructure.pdf_reporter import convert_json_to_pdf # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT # type: ignore
 
 async def main():
     # 1. CLI Argument Handling
@@ -98,7 +98,7 @@ if __name__ == "__main__":
             reports_out = str(EXPORTS_DIR)
             
             # Match patterns
-            findings_pattern = os.path.join(reports_out, f"agent_findings_{str(session_id)[:8]}_*.json")
+            findings_pattern = os.path.join(reports_out, f"agent_findings_{str(session_id)[:8]}_*.json") # type: ignore
             domain = urlparse(url).netloc.replace("www.", "")
             findings_pattern_url = os.path.join(reports_out, f"{domain}_*.json")
             

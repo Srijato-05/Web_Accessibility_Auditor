@@ -5,14 +5,22 @@ Uses a local LLM via Hugging Face Transformers to detect complex
 semantic and cognitive barriers.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 import json
-from typing import List, Optional
+from typing import List, Optional, Any, cast, Dict
 import asyncio
 import re
-from auditor.domain.agent_finding import AgentFinding
-from auditor.infrastructure.data_extractor import PageData
-from auditor.domain.interfaces import IAccessibilityAgent
-from auditor.shared.logging import auditor_logger
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.infrastructure.data_extractor import PageData # type: ignore
+from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
 
 # Lazy Loading for Heavy AI Libraries
 torch = None
@@ -22,8 +30,8 @@ def _lazy_load_ml():
     global torch, pipeline
     if torch is None or pipeline is None:
         try:
-            import torch as _torch
-            from transformers import pipeline as _pipeline
+            import torch as _torch # type: ignore
+            from transformers import pipeline as _pipeline # type: ignore
             torch = _torch
             pipeline = _pipeline
         except ImportError:
@@ -51,11 +59,15 @@ class NeuralAgent(IAccessibilityAgent):
         try:
             self.logger.info(f"Neural Agent: Loading local model {self.model_id}...")
             # Auto-detects GPU (cuda) or falls back to cpu
-            device = 0 if torch.cuda.is_available() else -1
+            is_cuda = False
+            if hasattr(torch, 'cuda') and torch.cuda.is_available(): # type: ignore
+                is_cuda = True
+                
+            device = 0 if is_cuda else -1
             self.generator = pipeline(
                 "text-generation", 
                 model=self.model_id, 
-                model_kwargs={"dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32},
+                model_kwargs={"dtype": torch.bfloat16 if is_cuda else torch.float32}, # type: ignore
                 device=device
             )
             self.logger.info("Neural Agent: Local Transformers Pipeline Initialized.")
@@ -87,20 +99,26 @@ class NeuralAgent(IAccessibilityAgent):
         
         try:
             # 3. Synchronous Gen wrapped in an asyncio thread to not block event loop
-            prompt = self.generator.tokenizer.apply_chat_template(
+            gen = cast(Any, self.generator)
+            if not hasattr(gen, 'tokenizer') or gen.tokenizer is None:
+                return []
+                
+            prompt = gen.tokenizer.apply_chat_template(
                 messages, 
                 tokenize=False, 
                 add_generation_prompt=True
             )
             
-            def run_inference():
-                return self.generator(
+            def run_inference(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+                if not gen:
+                    return []
+                return cast(List[Dict[str, Any]], gen(
                     prompt, 
                     max_new_tokens=500, 
                     temperature=0.1, 
                     do_sample=False,
                     return_full_text=False
-                )
+                ))
                 
             response = await asyncio.to_thread(run_inference)
             raw_text = response[0]["generated_text"].strip()

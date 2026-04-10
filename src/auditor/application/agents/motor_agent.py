@@ -5,12 +5,20 @@ Analyzes targets and keyboard patterns for physical accessibility issues.
 WCAG Focus: 2.1.1 Keyboard, 2.5.5 Target Size.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from typing import List
-from auditor.domain.agent_finding import AgentFinding
-from auditor.infrastructure.data_extractor import PageData
-from auditor.domain.interfaces import IAccessibilityAgent
-from auditor.application.agents.rules.motor_rules import is_target_too_small
-from auditor.shared.logging import auditor_logger
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.infrastructure.data_extractor import PageData # type: ignore
+from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
+from auditor.application.agents.rules.motor_rules import is_target_too_small # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
 
 
 class MotorAgent(IAccessibilityAgent):

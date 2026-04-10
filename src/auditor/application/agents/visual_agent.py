@@ -13,13 +13,21 @@ Implements detection for five WCAG techniques:
   G111 — Images/charts using only color
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from typing import List
 from uuid import UUID
 
-from auditor.domain.interfaces import IAccessibilityAgent
-from auditor.domain.agent_finding import AgentFinding
-from auditor.infrastructure.data_extractor import PageData, ElementData
-from auditor.application.agents.rules.color_rules import (
+from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.infrastructure.data_extractor import PageData, ElementData # type: ignore
+from auditor.application.agents.rules.color_rules import ( # type: ignore
     is_link_color_only,
     is_form_error_color_only,
     is_text_color_only_meaning,
@@ -27,7 +35,7 @@ from auditor.application.agents.rules.color_rules import (
     classify_status_color,
     _get_rgb,
 )
-from auditor.shared.logging import auditor_logger
+from auditor.shared.logging import auditor_logger # type: ignore
 
 
 class VisualAgent(IAccessibilityAgent):

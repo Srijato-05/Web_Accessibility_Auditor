@@ -7,9 +7,17 @@ all required fields, valid ranges, and known agent names before being
 returned to the caller.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from typing import List, Optional
-from auditor.domain.agent_finding import AgentFinding
-from auditor.shared.logging import auditor_logger
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
 
 logger = auditor_logger.getChild("AgentValidator")
 

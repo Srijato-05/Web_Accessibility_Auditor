@@ -1,13 +1,20 @@
 import json
 import os
+import sys
 from datetime import datetime
 from typing import Dict, Any
 
-from playwright.sync_api import sync_playwright
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
+from playwright.sync_api import sync_playwright # type: ignore
 
 def generate_html_from_json(data: Dict[str, Any]) -> str:
     """Generates an HTML report from the JSON audit findings."""
     session_id = data.get("session_id", "Unknown")
+    target_url = data.get("target_url", "Multiple Targets" if data.get("is_crawl", False) else "Unknown")
     generated_at_raw = data.get("generated_at", "")
     try:
         dt = datetime.fromisoformat(generated_at_raw)
@@ -15,9 +22,22 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
     except Exception:
         generated_at = generated_at_raw
 
-    total_findings = data.get("total_findings", 0)
+    # COMPATIBILITY LAYER: Support both 'findings' and 'violations'
+    raw_findings = data.get("findings", data.get("violations", []))
+    findings = list(raw_findings) if raw_findings is not None else []
+    total_findings = data.get("total_findings", len(findings))
+    
+    # Calculate by_agent if not provided
     by_agent = data.get("by_agent", {})
-    findings = data.get("findings", [])
+    if not by_agent:
+        by_agent = {}
+        for f in findings:
+            if isinstance(f, dict):
+                agent = f.get("agent", "unknown").lower()
+                by_agent[agent] = by_agent.get(agent, 0) + 1
+
+    # Matrix Support
+    matrix = data.get("matrix", {})
 
     # Start building HTML
     html = f"""
@@ -36,7 +56,7 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 padding: 40px;
             }}
             .container {{
-                max-width: 800px;
+                max-width: 900px;
                 margin: 0 auto;
                 background: white;
                 padding: 40px;
@@ -57,20 +77,42 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             .meta-info p {{ margin: 5px 0; }}
             .summary-box {{
                 display: flex;
-                gap: 20px;
+                flex-wrap: wrap;
+                gap: 15px;
                 margin-bottom: 40px;
             }}
             .card {{
                 flex: 1;
+                min-width: 140px;
                 background: #ebf4ff;
-                padding: 20px;
+                padding: 15px;
                 border-radius: 8px;
                 text-align: center;
                 border: 1px solid #bee3f8;
             }}
-            .card h3 {{ margin: 0 0 10px 0; font-size: 1.1em; color: #2b6cb0; }}
-            .card .number {{ font-size: 2em; font-weight: bold; color: #2c5282; margin: 0; }}
+            .card h3 {{ margin: 0 0 5px 0; font-size: 0.9em; color: #2b6cb0; text-transform: uppercase; }}
+            .card .number {{ font-size: 1.8em; font-weight: bold; color: #2c5282; margin: 0; }}
             
+            /* Matrix Styling */
+            .matrix-section {{ margin-bottom: 40px; page-break-inside: avoid; }}
+            .matrix-table {{ 
+                width: 100%; 
+                border-collapse: collapse; 
+                margin-top: 15px;
+                background: #fff;
+                font-size: 0.9em;
+                border: 1px solid #e2e8f0;
+            }}
+            .matrix-table th, .matrix-table td {{ 
+                border: 1px solid #e2e8f0; 
+                padding: 12px; 
+                text-align: center; 
+            }}
+            .matrix-table th {{ background: #f7fafc; color: #4a5568; }}
+            .matrix-label {{ text-align: left !important; font-weight: bold; background: #f7fafc; }}
+            .matrix-value {{ font-weight: bold; color: #2c5282; }}
+            .matrix-zero {{ color: #cbd5e0; }}
+
             h2 {{ color: #2d3748; margin-top: 40px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }}
             
             .finding {{
@@ -85,6 +127,7 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             .finding.visual {{ border-left-color: #4299e1; }}
             .finding.motor {{ border-left-color: #48bb78; }}
             .finding.cognitive {{ border-left-color: #9f7aea; }}
+            .finding.neural {{ border-left-color: #f56565; }}
             
             .finding-header {{
                 display: flex;
@@ -106,14 +149,18 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 font-weight: bold;
                 color: white;
                 text-transform: uppercase;
+                white-space: nowrap;
             }}
             .badge.visual {{ background: #4299e1; }}
             .badge.motor {{ background: #48bb78; }}
             .badge.cognitive {{ background: #9f7aea; }}
+            .badge.neural {{ background: #f56565; }}
+            .badge.below-a {{ background: #e53e3e; border: 1px solid #feb2b2; }}
             .badge.unknown {{ background: #a0aec0; }}
             
             .row {{ margin-bottom: 10px; }}
-            .label {{ font-weight: bold; color: #4a5568; width: 100px; display: inline-block; }}
+            .label {{ font-weight: bold; color: #4a5568; width: 120px; display: inline-block; }}
+            .url-source {{ font-size: 0.8em; color: #718096; margin-top: -10px; margin-bottom: 15px; font-family: monospace; }}
             
             .code-block {{
                 background: #f7fafc;
@@ -142,51 +189,90 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             <h1>Accessibility Audit Report</h1>
             
             <div class="meta-info">
+                <p><strong>Target:</strong> {target_url}</p>
                 <p><strong>Session ID:</strong> {session_id}</p>
-                <p><strong>Date Generated:</strong> {generated_at}</p>
+                <p><strong>Generated:</strong> {generated_at}</p>
             </div>
             
             <div class="summary-box">
                 <div class="card">
-                    <h3>Total Findings</h3>
+                    <h3>Total Finds</h3>
                     <p class="number">{total_findings}</p>
                 </div>
                 <div class="card">
-                    <h3>Visual Agent</h3>
+                    <h3>Visual</h3>
                     <p class="number">{by_agent.get('visual', 0)}</p>
                 </div>
                 <div class="card">
-                    <h3>Motor Agent</h3>
+                    <h3>Motor</h3>
                     <p class="number">{by_agent.get('motor', 0)}</p>
                 </div>
                 <div class="card">
-                    <h3>Cognitive Agent</h3>
+                    <h3>Cognitive</h3>
                     <p class="number">{by_agent.get('cognitive', 0)}</p>
                 </div>
                 <div class="card">
-                    <h3>Neural Agent</h3>
+                    <h3>Neural</h3>
                     <p class="number">{by_agent.get('neural', 0)}</p>
                 </div>
             </div>
+
+            {f'''
+            <div class="matrix-section">
+                <h2>Forensic Diagnostic Matrix</h2>
+                <table class="matrix-table">
+                    <thead>
+                        <tr>
+                            <th>Agent</th>
+                            <th>Perceivable</th>
+                            <th>Operable</th>
+                            <th>Understandable</th>
+                            <th>Robust</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join([f"""
+                        <tr>
+                            <td class="matrix-label">{agent.upper()}</td>
+                            <td class="{'matrix-value' if matrix[agent].get('Perceivable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Perceivable', 0)}</td>
+                            <td class="{'matrix-value' if matrix[agent].get('Operable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Operable', 0)}</td>
+                            <td class="{'matrix-value' if matrix[agent].get('Understandable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Understandable', 0)}</td>
+                            <td class="{'matrix-value' if matrix[agent].get('Robust',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Robust', 0)}</td>
+                        </tr>""" for agent in matrix.keys()])}
+                    </tbody>
+                </table>
+            </div>
+            ''' if matrix else ''}
             
             <h2>Detailed Findings</h2>
     """
 
     for idx, finding in enumerate(findings, 1):
-        agent = finding.get("agent", "unknown").lower()
-        violation = finding.get("violation", "Issue").replace("_", " ")
-        guideline = finding.get("guideline", "N/A")
-        issue_desc = finding.get("issue", "No description provided.")
+        # Data Mapping Layer (Supports legacy and Phase XII structures)
+        agent = finding.get("agent", "axe").lower()
+        violation = finding.get("violation", finding.get("rule_id", "Issue")).replace("_", " ")
+        guideline = finding.get("guideline", finding.get("compliance_level", "N/A"))
+        category = finding.get("category", "")
+        issue_desc = finding.get("issue", finding.get("description", "No description provided."))
         impact = finding.get("impact", "N/A")
-        element = finding.get("element", "")
+        element = finding.get("element", finding.get("selector", ""))
         fix = finding.get("fix", "No fix recommended.")
+        url = finding.get("url", "")
+        
+        # Forensic Intelligence Markers
+        is_below_a = finding.get("compliance_level") == "Below A"
         
         html += f"""
             <div class="finding {agent}">
                 <div class="finding-header">
-                    <h3 class="finding-title">{idx}. {violation} (WCAG {guideline})</h3>
-                    <span class="badge {agent}">{agent}</span>
+                    <h3 class="finding-title">{idx}. {violation} {'['+category.upper()+']' if category else ''}</h3>
+                    <div style="display: flex; gap: 8px;">
+                        {f'<span class="badge below-a">Below A</span>' if is_below_a else ''}
+                        <span class="badge {agent}">{agent}</span>
+                        <span class="badge unknown" style="background: #edf2f7; color: #4a5568;">{guideline}</span>
+                    </div>
                 </div>
+                {f'<div class="url-source">Source: {url}</div>' if url else ''}
                 <div class="row">
                     <span class="label">Impact:</span> {impact}
                 </div>
@@ -197,10 +283,10 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
         
         if element:
             # Escape HTML tags for display
-            safe_element = element.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_element = str(element).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             html += f"""
                 <div class="row" style="margin-top: 15px;">
-                    <span class="label" style="display: block; margin-bottom: 5px;">Element:</span>
+                    <span class="label" style="display: block; margin-bottom: 5px;">Selector/Element:</span>
                     <div class="code-block">{safe_element}</div>
                 </div>
             """

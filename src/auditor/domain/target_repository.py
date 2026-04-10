@@ -1,6 +1,14 @@
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from abc import ABC, abstractmethod
 from typing import List
-from .models import AuditTarget
+from auditor.domain.models import AuditTarget # type: ignore
 
 class ITargetRepository(ABC):
     """Port for managing the registration and tracking of monitored domains."""
@@ -11,7 +19,7 @@ class ITargetRepository(ABC):
 
     @abstractmethod
     async def get_active_domains(self) -> List[AuditTarget]:
-        pass
+        return []
 
     @abstractmethod
     async def update_domain(self, domain: AuditTarget) -> None:

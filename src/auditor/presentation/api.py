@@ -1,11 +1,17 @@
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensuring import stability for external scripts
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from fastapi import APIRouter, BackgroundTasks, Request, HTTPException # type: ignore
 from fastapi.responses import FileResponse # type: ignore
 from pydantic import BaseModel # type: ignore
 import uuid
 from uuid import UUID
 import datetime
-import os
-import sys
 import asyncio
 
 from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
@@ -24,7 +30,7 @@ from auditor.infrastructure.pdf_reporter import convert_json_to_pdf # type: igno
 import glob
 from urllib.parse import urlparse
 
-from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT
+from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT # type: ignore
 router = APIRouter()
 
 # Global Path Legacy Support
@@ -230,6 +236,7 @@ async def get_audit_violations(audit_id: str):
             })
             
         return result
+
 
 @router.post("/violations/{violation_id}/fix")
 async def fix_violation(violation_id: str):

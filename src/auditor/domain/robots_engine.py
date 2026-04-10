@@ -16,11 +16,12 @@ from typing import List
 # IDE PATH RECONCILIATION
 import os
 import sys
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from auditor.shared.logging import auditor_logger # type: ignore
+from playwright.async_api import async_playwright # type: ignore
 
 class RobotsAdherenceEngine:
     """
@@ -35,7 +36,6 @@ class RobotsAdherenceEngine:
 
     async def initialize(self, base_url: str):
         """Initializes the engine by fetching robots.txt from the domain root using Apex Stealth."""
-        from playwright.async_api import async_playwright
         parsed = urlparse(base_url)
         root_url = f"{parsed.scheme}://{parsed.netloc}"
         robots_url = f"{root_url}/robots.txt"

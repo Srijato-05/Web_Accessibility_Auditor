@@ -40,15 +40,23 @@ def parse_rgb(css_color: str) -> Optional[Tuple[int, int, int]]:
             int(rgb_match.group(3)),
         )
 
-    hex_match = re.match(r"#([0-9a-f]{6})$", css_color)
-    if hex_match:
-        h = hex_match.group(1)
-        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    # Hex 6 Parsing (#RRGGBB)
+    hex6_match = re.match(r"#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$", css_color)
+    if hex6_match:
+        return (
+            int(hex6_match.group(1), 16),
+            int(hex6_match.group(2), 16),
+            int(hex6_match.group(3), 16),
+        )
 
-    hex3_match = re.match(r"#([0-9a-f]{3})$", css_color)
+    # Hex 3 Parsing (#RGB)
+    hex3_match = re.match(r"#([0-9a-f])([0-9a-f])([0-9a-f])$", css_color)
     if hex3_match:
-        h = hex3_match.group(1)
-        return (int(h[0] * 2, 16), int(h[1] * 2, 16), int(h[2] * 2, 16))
+        return (
+            int(hex3_match.group(1) * 2, 16),
+            int(hex3_match.group(2) * 2, 16),
+            int(hex3_match.group(3) * 2, 16),
+        )
 
     return None
 

@@ -76,7 +76,6 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self._schema_verified = True
             
         try:
-            from sqlmodel import select
             statement = select(AuditSessionModel).where(AuditSessionModel.id == session_id).options(selectinload(AuditSessionModel.violations))
             results = await self.db_session.exec(statement)
             result = results.first()
@@ -134,9 +133,14 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                         help_url=v.help_url,
                         selector=v.selector,
                         nodes=v.nodes,
-                        tags=v.tags
+                        tags=v.tags,
+                        agent=v.agent,
+                        compliance_level=v.compliance_level,
+                        category=v.category,
+                        severity_matrix=v.severity_matrix,
+                        url=v.url
                     )
-                    self.db_session.add(model) # Use add instead of merge for new unique records
+                    self.db_session.add(model)
                 
                 await self.db_session.commit()
             self.logger.debug("Batch commit SUCCESS.")
@@ -179,7 +183,12 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                         help_url=v.help_url,
                         selector=v.selector,
                         nodes=v.nodes,
-                        tags=v.tags
+                        tags=v.tags,
+                        agent=v.agent,
+                        compliance_level=v.compliance_level,
+                        category=v.category,
+                        severity_matrix=v.severity_matrix,
+                        url=v.url
                     ) for v in m.violations
                 ]
                 sessions.append(session)
@@ -229,6 +238,15 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                 await self.db_session.exec(text("ALTER TABLE audit_sessions ADD COLUMN aria_events JSON"))
                 await self.db_session.commit()
                 self.logger.info("Migration SUCCESS: Column 'aria_events' added.")
+
+            # Check violations table for Phase XII fields
+            res = await self.db_session.exec(text("PRAGMA table_info(violations)"))
+            cols = [row[1] for row in res.fetchall()]
+            for field in ["agent", "compliance_level", "category", "severity_matrix"]:
+                if field not in cols:
+                    self.logger.warning(f"SCHEMA MISMATCH: Column '{field}' missing in 'violations'. Migrating...")
+                    await self.db_session.exec(text(f"ALTER TABLE violations ADD COLUMN {field} TEXT"))
+                    await self.db_session.commit()
 
         except Exception as e:
             self.logger.error(f"Schema integrity check failed or columns already exist: {e}")

@@ -29,6 +29,7 @@ from auditor.domain.exceptions import AuditFailedError, NavigationError, Reposit
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
+from auditor.shared.compliance_mapper import ComplianceMapper # type: ignore
 from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
 from auditor.application.agent_service import get_agent_service # type: ignore
 from auditor.shared.paths import EXPORTS_DIR
@@ -153,15 +154,27 @@ class AuditService:
                     # Cycle 12: Knowledge persistence for PDF/Stakeholder Reporting
                     controller.export_findings(agent_findings, str(session.id), url)
                     
-                    # Convert AgentFindings to standard Violation objects for unified reporting
+                    # Convert AgentFindings to standard Violation objects with Advanced Forensics (Phase XII)
                     for af in agent_findings:
                         self.logger.info(f"AGENT FINDING [{af.agent.upper()}]: {af.issue} at {af.selector}")
+                        
+                        agent_type = af.agent.lower()
+                        impact = ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE
+                        # Derive tags if possible from guideline
+                        tags = [f"wcag{af.guideline}"] # Rough heuristic, but better than nothing
+                        
                         v = Violation(
                             rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
-                            impact=ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE,
+                            impact=impact,
+                            agent=agent_type,
                             description=f"[{af.agent.upper()} AGENT] {af.issue} (Confidence: {af.confidence}). Fix Recommended: {af.fix}",
                             help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}",
-                            session_id=session.id # type: ignore
+                            session_id=session.id, # type: ignore
+                            tags=tags,
+                            compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
+                            category=ComplianceMapper.get_category(tags),
+                            severity_matrix=ComplianceMapper.get_severity_matrix(impact),
+                            url=url
                         )
                         v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue}]
                         v.selector = af.selector
@@ -184,9 +197,18 @@ class AuditService:
             # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
             # Parallelize structural telemetry to avoid blocking the forensic path
             tg_tasks = []
-            for v in violations:
+            final_violations: List[Violation] = violations # Explicit type hint for linter
+            # Normalize and validate before saving
+            for v in final_violations:
+                # Ensure nodes is at least an empty list if None, for SQLModel compatibility
+                if v.nodes is None:
+                    v.nodes = []
+                # Handle Node-less violations (Systemic Heuristics)
+                if not v.nodes:
+                    tg_tasks.append(self.tg_repo.upsert_component_violation_async(v.url, v, f"SYSTEMIC-VIOLATION: {v.rule_id}"))
+
                 for node in v.nodes: # type: ignore
-                    html_snippet = str(node.get("html", ""))
+                    html_snippet = str(node.get("html", "GENERIC-ELEMENT"))
                     if html_snippet:
                         tg_tasks.append(
                             asyncio.create_task(
@@ -201,15 +223,17 @@ class AuditService:
                 await self.repository.save_violations(violations)
                 
                 # Update Session State
-                session.complete() # type: ignore
+                cur_session = cast(AuditSession, session)
+                cur_session.violations = cast(List[Violation], violations)
+                cur_session.complete() # type: ignore
                 
                 # Capture remediation plan in DB for frontend Intelligence Link
                 try:
-                    session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations)) # type: ignore
+                    cur_session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations)) # type: ignore
                 except:
                     pass
                     
-                await self.repository.save_session(session)
+                await self.repository.save_session(cur_session)
                 
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
                 try:

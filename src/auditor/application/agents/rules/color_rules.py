@@ -8,13 +8,21 @@ Each function takes element data and returns True if a violation is detected.
 These are PURE FUNCTIONS — no I/O, no side effects, no ML.
 """
 
-from typing import Dict, Optional, Tuple
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal utilities are resolvable
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
+from typing import Dict, Optional, Tuple, cast
 from auditor.application.agents.utils.contrast import (
     parse_rgb,
     contrast_ratio,
     meets_link_distinction,
     is_similar_color,
-)
+) # type: ignore
 
 
 # Colors commonly used for error/success/warning states
@@ -160,7 +168,7 @@ def is_text_color_only_meaning(
     if is_similar_color(el_color, parent_color):
         return False
 
-    if classify_status_color(el_color) is not None:
+    if el_color is not None and classify_status_color(el_color) is not None:
         return True
 
     return False

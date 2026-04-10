@@ -1,12 +1,21 @@
 import os
 import hashlib
 import asyncio
+import sys
 from urllib.parse import urlparse
-import pyTigerGraph as tg
-from dotenv import load_dotenv
 
-from auditor.shared.logging import auditor_logger
-from auditor.domain.violation import Violation
+# IDE PATH RECONCILIATION: Ensuring import stability for external scripts
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
+from typing import Any, cast, Optional
+
+import pyTigerGraph as tg # type: ignore
+from dotenv import load_dotenv # type: ignore
+
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.violation import Violation # type: ignore
 
 load_dotenv()
 
@@ -24,10 +33,12 @@ class TigerGraphRepository:
             self.conn = None
             return
 
-        parsed = urlparse(raw_host)
-        self.host = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else raw_host
+        parsed = urlparse(cast(str, raw_host))
+        self.host = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else cast(str, raw_host)
 
-        if not self.host.startswith("http"):
+        if self.host and str(self.host).startswith("http"):
+            pass # already has protocol
+        else:
             self.host = f"https://{self.host}"
 
         try:
@@ -38,7 +49,8 @@ class TigerGraphRepository:
                 tgCloud=True
             )
 
-            self.conn.getToken()
+            if self.conn:
+                self.conn.getToken() # type: ignore
 
             self.logger.info(f"Connected: {self.host} | Graph: {self.graphname}")
 
@@ -52,7 +64,7 @@ class TigerGraphRepository:
         async with self._semaphore:
             try:
                 await asyncio.wait_for(
-                    asyncio.to_thread(
+                    asyncio.to_thread( # type: ignore
                         self._upsert_page_link_sync,
                         source_url,
                         target_url,
@@ -67,12 +79,15 @@ class TigerGraphRepository:
 
     def _upsert_page_link_sync(self, source_url, target_url, domain_url):
         try:
-            self.conn.upsertVertex("Domain", domain_url, {"url": domain_url})
-            self.conn.upsertVertex("Page", source_url, {"url": source_url})
-            self.conn.upsertVertex("Page", target_url, {"url": target_url})
+            conn = cast(Any, self.conn)
+            if not conn: return
+            
+            conn.upsertVertex("Domain", domain_url, {"url": domain_url})
+            conn.upsertVertex("Page", source_url, {"url": source_url})
+            conn.upsertVertex("Page", target_url, {"url": target_url})
 
-            self.conn.upsertEdge("Domain", domain_url, "DOMAIN_OWNS_PAGE", "Page", source_url)
-            self.conn.upsertEdge("Page", source_url, "PAGE_LINKS_TO", "Page", target_url)
+            conn.upsertEdge("Domain", domain_url, "DOMAIN_OWNS_PAGE", "Page", source_url)
+            conn.upsertEdge("Page", source_url, "PAGE_LINKS_TO", "Page", target_url)
 
         except Exception as e:
             self.logger.error(f"Sync Page Link Error: {e}")
@@ -83,7 +98,7 @@ class TigerGraphRepository:
         async with self._semaphore:
             try:
                 await asyncio.wait_for(
-                    asyncio.to_thread(
+                    asyncio.to_thread( # type: ignore
                         self._upsert_component_violation_sync,
                         page_url,
                         violation,
@@ -98,6 +113,9 @@ class TigerGraphRepository:
 
     def _upsert_component_violation_sync(self, page_url, violation: Violation, node_html):
         try:
+            conn = cast(Any, self.conn)
+            if not conn: return
+            
             footprint = hashlib.sha256(node_html.encode("utf-8")).hexdigest()
             snippet_preview = node_html[:150]
 
@@ -113,7 +131,7 @@ class TigerGraphRepository:
                 else str(violation.impact)
             )
 
-            self.conn.upsertVertex(
+            conn.upsertVertex(
                 "Component",
                 footprint,
                 {
@@ -122,7 +140,7 @@ class TigerGraphRepository:
                 }
             )
 
-            self.conn.upsertVertex(
+            conn.upsertVertex(
                 "Violation",
                 violation.rule_id,
                 {
@@ -131,7 +149,7 @@ class TigerGraphRepository:
                 }
             )
 
-            self.conn.upsertVertex(
+            conn.upsertVertex(
                 "ComplianceStandard",
                 standard_id,
                 {
@@ -139,9 +157,9 @@ class TigerGraphRepository:
                 }
             )
 
-            self.conn.upsertEdge("Page", page_url, "PAGE_CONTAINS", "Component", footprint)
+            conn.upsertEdge("Page", page_url, "PAGE_CONTAINS", "Component", footprint)
 
-            self.conn.upsertEdge(
+            conn.upsertEdge(
                 "Component",
                 footprint,
                 "COMPONENT_TRIGGERS",
@@ -149,7 +167,7 @@ class TigerGraphRepository:
                 violation.rule_id
             )
 
-            self.conn.upsertEdge(
+            conn.upsertEdge(
                 "Violation",
                 violation.rule_id,
                 "VIOLATION_FAILS",

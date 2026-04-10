@@ -10,14 +10,14 @@ if _root not in sys.path:
 
 from datetime import datetime
 from uuid import UUID, uuid4
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select
+from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
+from sqlmodel import select # type: ignore
 
-from auditor.application.audit_service import AuditService
-from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository
-from auditor.infrastructure.playwright_engine import PlaywrightEngine
-from auditor.shared.logging import auditor_logger
+from auditor.application.audit_service import AuditService # type: ignore
+from auditor.infrastructure.audit_repository import SqlAlchemyAuditRepository # type: ignore
+from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
 
 DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 

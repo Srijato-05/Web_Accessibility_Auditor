@@ -8,18 +8,26 @@ agents and collects their findings. Agents run concurrently.
 Output is validated before being returned.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 import asyncio
 import json
-import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-from auditor.domain.interfaces import IAccessibilityAgent
-from auditor.domain.agent_finding import AgentFinding
-from auditor.infrastructure.data_extractor import PageData
-from auditor.application.agents.utils.validators import validate_batch
-from auditor.shared.paths import EXPORTS_DIR
-from auditor.shared.logging import auditor_logger
+from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.infrastructure.data_extractor import PageData # type: ignore
+from auditor.application.agents.utils.validators import validate_batch # type: ignore
+from auditor.shared.paths import EXPORTS_DIR # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.infrastructure.pdf_reporter import convert_json_to_pdf # type: ignore
 
 
 class AgentController:
@@ -88,8 +96,8 @@ class AgentController:
         self,
         findings: List[AgentFinding],
         session_id: str,
-        target_url: str = None,
-        output_dir: str = None,
+        target_url: Optional[str] = None,
+        output_dir: Optional[str] = None,
     ) -> str:
         """Export findings to a JSON file. Returns the file path."""
         if output_dir is None:
@@ -104,11 +112,13 @@ class AgentController:
             cleaned = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", cleaned).strip("_")
             base_name = f"{cleaned}_{timestamp}"
         else:
-            base_name = f"agent_findings_{session_id[:8]}_{timestamp}"
+            id_match = re.match(r"^(.{1,8})", str(session_id))
+            safe_id = id_match.group(1) if id_match else "agent"
+            base_name = f"agent_findings_{safe_id}_{timestamp}"
             
-        filepath = os.path.join(output_dir, f"{base_name}.json")
+        filepath = os.path.join(str(output_dir), f"{base_name}.json")
 
-        output = {
+        output: Dict[str, Any] = {
             "session_id": session_id,
             "generated_at": datetime.now().isoformat(),
             "total_findings": len(findings),
@@ -130,8 +140,6 @@ class AgentController:
         
         # Generate PDF in a background thread to avoid blocking the event loop
         try:
-            import asyncio
-            from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
             pdf_path = filepath.replace(".json", ".pdf")
             
             # Use current loop for non-blocking execution

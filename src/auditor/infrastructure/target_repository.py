@@ -10,14 +10,14 @@ if _root not in sys.path:
 
 from typing import List, Optional, Dict, Any, Union, Annotated
 from datetime import datetime
-from sqlmodel import select, update, delete
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select, update, delete # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
-from auditor.domain.models import AuditTarget, DomainStatus
-from auditor.domain.target_repository import ITargetRepository
-from auditor.domain.exceptions import RepositoryError
-from auditor.shared.logging import auditor_logger
-from auditor.infrastructure.persistence_models import TargetModel
+from auditor.domain.models import AuditTarget, DomainStatus # type: ignore
+from auditor.domain.target_repository import ITargetRepository # type: ignore
+from auditor.domain.exceptions import RepositoryError # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.infrastructure.persistence_models import TargetModel # type: ignore
 
 class SqlAlchemyTargetRepository(ITargetRepository):
     """

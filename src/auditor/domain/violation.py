@@ -20,3 +20,10 @@ class Violation:
     nodes: List[Dict[str, Any]] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
     session_id: Optional[UUID] = None
+    
+    # Advanced Forensics (Phase XII)
+    agent: str = "axe"                   # axe, visual, motor, cognitive, neural
+    compliance_level: Optional[str] = None # Below A, A, AA, AAA
+    category: Optional[str] = None        # Perceivable, Operable, etc.
+    severity_matrix: Optional[str] = None  # e.g., "Critical (Business Risk)"
+    url: Optional[str] = None             # Source URL for crawler missions

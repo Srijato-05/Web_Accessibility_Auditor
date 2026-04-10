@@ -1,3 +1,11 @@
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from abc import ABC, abstractmethod
 from typing import List, Set
 from urllib.parse import urlparse, urljoin
@@ -8,7 +16,7 @@ class ILinkExtractor(ABC):
     @abstractmethod
     async def extract_links(self, url: str) -> List[str]:
         """Navigate to URL and return all unique internal links."""
-        pass
+        return []
 
 class LinkDiscoveryService:
     """Domain Service to manage the discovery and queueing of URLs for auditing."""

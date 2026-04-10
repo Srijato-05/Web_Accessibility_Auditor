@@ -1,9 +1,9 @@
 import asyncio
 import os
 import sys
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel, select
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
+from sqlmodel import SQLModel, select # type: ignore
+from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
 # IDE PATH RECONCILIATION: Ensuring import stability for external scripts
 _curr = os.path.dirname(os.path.abspath(__file__))
@@ -11,8 +11,8 @@ _root = os.path.abspath(os.path.join(_curr, "..", "src"))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel
-from auditor.infrastructure.task_model import TaskModel
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
+from auditor.infrastructure.task_model import TaskModel # type: ignore
 
 DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 

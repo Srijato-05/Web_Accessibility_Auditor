@@ -15,11 +15,12 @@ from bs4 import BeautifulSoup # type: ignore
 # IDE PATH RECONCILIATION
 import os
 import sys
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from auditor.shared.logging import auditor_logger # type: ignore
+from playwright.async_api import async_playwright # type: ignore
 
 class SitemapDiscoveryEngine:
     """
@@ -32,7 +33,6 @@ class SitemapDiscoveryEngine:
 
     async def discover_urls(self, sitemap_url: str) -> Set[str]:
         """Recursively discovers all URLs from a sitemap or index using Apex Stealth."""
-        from playwright.async_api import async_playwright
         discovered: Set[str] = set()
         to_process = {sitemap_url}
         processed = set()

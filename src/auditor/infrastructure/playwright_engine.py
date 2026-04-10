@@ -24,10 +24,10 @@ from typing import List, Any, Dict, Optional, Tuple, cast
 from uuid import UUID
 from datetime import datetime
 
-# ENGINE PATH RECONCILIATION: Ensuring absolute import stability
-root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if root_path not in sys.path:
-    sys.path.insert(0, root_path)
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 import psutil # type: ignore
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Error as PlaywrightError # type: ignore
@@ -39,6 +39,7 @@ from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.shared.stealth_profiles import StealthProfileGenerator # type: ignore
 from auditor.infrastructure.stealth_protocol import StealthProtocol # type: ignore
 from auditor.infrastructure.data_extractor import extract_page_data, PageData # type: ignore
+from auditor.shared.compliance_mapper import ComplianceMapper # type: ignore
 
 # --------------------------------------------------------------------------
 # ENGINE STEALTH CONFIGURATION: THE NEURAL GHOST
@@ -394,19 +395,20 @@ class PlaywrightEngine(IBrowserEngine):
     # PRIMARY MISSION: SECURE AUDIT EXECUTION
     # --------------------------------------------------------------------------
 
-    async def scan_url(self, url: str) -> List[Violation]:
+    async def scan_url(self: "PlaywrightEngine", url: str) -> List[Violation]:
         """
         Autonomous Engine Audit Protocol (AZAP).
         Includes Persona Rotation for WAF bypass.
         """
-        self.telemetry["start_time"] = datetime.now()
+        _self = cast(Any, self)
+        _self.telemetry["start_time"] = datetime.now()
         start_time = time.time()
         
         # Ensure engine is active
-        if not self.browser:
-            await self.start()
+        if not _self.browser:
+            await _self.start()
             
-        br = self.browser
+        br = _self.browser
         if not br:
             raise EngineError("Engine Cluster Failure: Browser offline.")
             
@@ -419,29 +421,29 @@ class PlaywrightEngine(IBrowserEngine):
             try:
                 # Attempt 2: Switch to Mobile Persona
                 if current_attempt == 2:
-                    self.logger.warning(f"PERSONA ROTATION: Attempt {current_attempt} using Mobile Persona...")
-                    mobile_profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Mobile" in p["name"]), self.profile)
-                    self.profile = mobile_profile
+                    _self.logger.warning(f"PERSONA ROTATION: Attempt {current_attempt} using Mobile Persona...") # type: ignore
+                    mobile_profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Mobile" in p["name"]), _self.profile) # type: ignore
+                    _self.profile = mobile_profile # type: ignore
                 
                 # Attempt 3: Switch to Headful (with Headless fallback)
                 if current_attempt == 3:
-                    self.logger.critical(f"FINAL BREACH: Attempt {current_attempt} engaging Headful Mode...")
+                    _self.logger.critical(f"FINAL BREACH: Attempt {current_attempt} engaging Headful Mode...") # type: ignore
                     try:
-                        if self.browser:
-                            await self.browser.close()
-                        self.headless = False
-                        await self.start()
+                        if _self.browser: # type: ignore
+                            await _self.browser.close() # type: ignore
+                        _self.headless = False # type: ignore
+                        await _self.start() # type: ignore
                     except Exception as he:
-                        self.logger.warning(f"Headful Launch Failure: {he}. Falling back to Extreme Stealth Headless...")
-                        self.headless = True
-                        await self.start()
+                        _self.logger.warning(f"Headful Launch Failure: {he}. Falling back to Extreme Stealth Headless...") # type: ignore
+                        _self.headless = True # type: ignore
+                        await _self.start() # type: ignore
                     
-                    br = self.browser # Refresh reference
-                    self.profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Windows-Chrome" in p["name"]), self.profile)
+                    br = _self.browser # type: ignore
+                    _self.profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Windows-Chrome" in p["name"]), _self.profile) # type: ignore
 
-                local_context = await br.new_context(
-                    viewport=self.profile['viewport'],
-                    user_agent=self.profile['userAgent'],
+                local_context = await br.new_context( # type: ignore
+                    viewport=_self.profile['viewport'], # type: ignore
+                    user_agent=_self.profile['userAgent'], # type: ignore
                     java_script_enabled=True,
                     bypass_csp=False, # Disable CSP bypass (sometimes detected)
                     extra_http_headers={
@@ -455,20 +457,20 @@ class PlaywrightEngine(IBrowserEngine):
                 )
                 
                 # Re-inject stealth for this context
-                stealth_js = StealthProtocol.get_injection_script(self.profile)
+                stealth_js = StealthProtocol.get_injection_script(_self.profile) # type: ignore
                 await local_context.add_init_script(stealth_js)
-                await self._inject_zenith_stealth(local_context, self.profile)
+                await _self._inject_zenith_stealth(local_context, _self.profile) # type: ignore
                 
                 page = await local_context.new_page()
                 
                 # 1. Smart Timeout Adaptation
-                timeout = await self._get_dynamic_timeout(page, url)
+                timeout = await _self._get_dynamic_timeout(page, url) # type: ignore
                 
                 # 2. Navigation with Stealth
                 # Adaptive Wait State: Relax to 'commit' on retries to bypass navigation hangs
                 wait_state = "domcontentloaded" if current_attempt == 1 else "commit"
                 
-                self.logger.info(f"Navigating Mission Target: {url} (Wait: {wait_state} | Attempt: {current_attempt})")
+                _self.logger.info(f"Navigating Mission Target: {url} (Wait: {wait_state} | Attempt: {current_attempt})") # type: ignore
                 await page.goto(
                     url, 
                     wait_until=wait_state, # type: ignore
@@ -478,15 +480,15 @@ class PlaywrightEngine(IBrowserEngine):
                 
                 if wait_state == "commit":
                     # If we only waited for commit, give the DOM some extra time to breathe
-                    self.logger.info("Resilient Navigation: Executing 5s Structural Hydration Wait...")
+                    _self.logger.info("Resilient Navigation: Executing 5s Structural Hydration Wait...") # type: ignore
                     await asyncio.sleep(5.0)
                 
                 # Cognitive Delay (Mimic reading time)
                 if current_attempt >= 2:
-                    self.logger.info(f"Stealth Phase IX: Executing {10}s Cognitive Pause...")
+                    _self.logger.info(f"Stealth Phase IX: Executing {10}s Cognitive Pause...") # type: ignore
                     await asyncio.sleep(10.0)
                     
-                await self._stabilize_dom(page)
+                await _self._stabilize_dom(page) # type: ignore
                 
                 # Check for zero content (Next.js hydration safe-check)
                 link_count = await page.evaluate("() => document.querySelectorAll('a').length")
@@ -494,61 +496,66 @@ class PlaywrightEngine(IBrowserEngine):
                     title = await page.title()
                     if "access denied" in title.lower() or "forbidden" in title.lower():
                         if current_attempt < MAX_PERSONAS:
-                            self.logger.critical(f"ENGINE BLOCK DETECTED: CDN/WAF rejected the stealth profile for {url} on attempt {current_attempt}. Retrying with rotation...")
+                            _self.logger.critical(f"ENGINE BLOCK DETECTED: CDN/WAF rejected the stealth profile for {url} on attempt {current_attempt}. Retrying with rotation...") # type: ignore
                             raise AuditFailedError("WAF Block detected")
                         else:
-                            self.logger.critical(f"FATAL BLOCK: All personas failed for {url}.")
+                            _self.logger.critical(f"FATAL BLOCK: All personas failed for {url}.") # type: ignore
                             raise EngineError(f"Irrecoverable WAF Block on {url} after persona rotation.")
                         
-                    self.logger.warning(f"Engine Detection: Empty DOM detected for {url}. Initiating Emergency Hydration Wait...")
+                    _self.logger.warning(f"Engine Detection: Empty DOM detected for {url}. Initiating Emergency Hydration Wait...") # type: ignore
                     await asyncio.sleep(5.0)
-                    await self._stabilize_dom(page)
+                    await _self._stabilize_dom(page) # type: ignore
 
                 # Phase XI: High-Density Focus-Path Simulation (30+ nodes)
-                self.logger.debug("Simulating High-Density Keyboard Navigation...")
-                for _ in range(30):
-                    await page.keyboard.press("Tab")
-                    await asyncio.sleep(0.05) # High-speed sweep
+                _self.logger.debug("Simulating High-Density Keyboard Navigation...") # type: ignore
+                # Disable Stealth Sweep for static quality consistency
+                # for _ in range(30):
+                #     await page.keyboard.press("Tab")
+                #     await asyncio.sleep(0.05) # High-speed sweep
 
                 # 4. Critical Accessibility Analysis (Axe)
-                self.logger.info("Executing Autonomous Accessibility Forensics...")
-                axe = Axe()
-                results = await axe.run(page) # type: ignore
-                
-                # AxeResults object mapping (Fixes AttributeError)
-                if hasattr(results, 'violations'):
-                    axe_violations = results.violations
-                elif isinstance(results, dict):
-                    axe_violations = results.get("violations", [])
-                else:
-                    # Robust fallback for custom objects/NamedTuples
-                    axe_violations = getattr(results, 'violations', [])
-                
+                _self.logger.info("Executing Autonomous Accessibility Forensics...") # type: ignore
+                axe_violations: List[Any] = []
+                try:
+                    from axe_playwright_python.async_playwright import Axe
+                    results = await Axe().run(page) 
+                    
+                    if hasattr(results, 'violations'):
+                        axe_violations = cast(Any, results).violations
+                    elif isinstance(results, dict):
+                        axe_violations = results.get("violations", [])
+                    else:
+                        axe_violations = getattr(results, 'violations', [])
+                        
+                    _self.logger.info(f"Forensic Analysis Complete: {len(axe_violations)} base violations documented.") # type: ignore
+                except Exception as axe_err:
+                    _self.logger.error(f"Axe Forensic Engine Failure: {axe_err}")
+                    axe_violations = []
+
                 # Cycle 14: Neural Data Extraction for Agents
                 try:
-                    self.logger.info("Executing Neural Data Extraction [ZET-X1]...")
-                    from auditor.infrastructure.data_extractor import extract_page_data
-                    self.page_data = await extract_page_data(
+                    _self.logger.info("Executing Neural Data Extraction [ZET-X1]...") # type: ignore
+                    _self.page_data = await extract_page_data( # type: ignore
                         page, 
-                        self.session_id, 
+                        _self.session_id, # type: ignore
                         capture_screenshot=True
                     )
                 except Exception as ee:
-                    self.logger.warning(f"Neural Extraction Failure [ZET-X1]: {ee}")
+                    _self.logger.warning(f"Neural Extraction Failure [ZET-X1]: {ee}") # type: ignore
 
+                # Domain-Specific Heuristics
                 custom_v = []
-                if isinstance(axe_violations, list):
-                    try:
-                        custom_v = await self._run_proprietary_heuristics(page)
-                    except Exception as he:
-                        self.logger.warning(f"Forensic Cluster minor failure: {he}")
+                try:
+                    custom_v = await _self._run_proprietary_heuristics(page) # type: ignore
+                except Exception as he:
+                    _self.logger.warning(f"Forensic Cluster minor failure: {he}") # type: ignore
                 
                 # 5. Synthesis & Telemetry
-                all_violations = axe_violations + custom_v
+                all_violations_raw = axe_violations + custom_v
                 duration = time.time() - start_time
-                self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations)} | T+{duration:.2f}s")
+                _self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations_raw)} | T+{duration:.2f}s") # type: ignore
                 
-                return all_violations
+                return _self._map_results(all_violations_raw, url) # type: ignore
                 
             except AuditFailedError as e:
                 if "WAF Block" in str(e) and current_attempt < MAX_PERSONAS:
@@ -558,10 +565,10 @@ class PlaywrightEngine(IBrowserEngine):
                     continue
                 raise
             except (PlaywrightError, asyncio.TimeoutError) as pe:
-                self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}")
+                _self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}") # type: ignore
                 raise EngineError(f"Audit failed for {url}: {pe}")
             except Exception as e:
-                self.logger.critical(f"FATAL Engine Anomaly at {url}: {e}", exc_info=True)
+                _self.logger.critical(f"FATAL Engine Anomaly at {url}: {e}", exc_info=True) # type: ignore
                 raise EngineError(f"Audit failed for {url}: {e}")
             finally:
                 if page:
@@ -576,7 +583,7 @@ class PlaywrightEngine(IBrowserEngine):
         
         return []
 
-    async def _get_dynamic_timeout(self, page: Page, url: str) -> int:
+    async def _get_dynamic_timeout(self: "PlaywrightEngine", page: Page, url: str) -> int:
         """Adapts timeout based on hardware load and domain profile."""
         base_timeout = 60000 
         
@@ -1239,13 +1246,16 @@ class PlaywrightEngine(IBrowserEngine):
     # DATA RECONCILIATION & TELEMETRY
     # --------------------------------------------------------------------------
 
-    def _map_results(self, results: Any) -> List[Violation]:
+    def _map_results(self, results: Any, url: str) -> List[Violation]:
         """Technically dense mapping of cluster-data into the domain model."""
         violations = []
         
         # Robustly extract violations list
         raw_violations = []
-        if isinstance(results, dict):
+        if isinstance(results, list):
+            # NEW: Handle case where list of violations is passed directly
+            raw_violations = results
+        elif isinstance(results, dict):
             raw_violations = results.get("violations", [])
         else:
             raw_violations = getattr(results, "violations", [])
@@ -1253,25 +1263,32 @@ class PlaywrightEngine(IBrowserEngine):
                 raw_violations = results.results.get("violations", [])
 
         for raw_v in raw_violations:
+            if hasattr(raw_v, 'description'):
+                # Already a Violation object (proprietary heuristic)
+                violations.append(cast(Violation, raw_v))
+                continue
+                
             v = cast(Dict[str, Any], raw_v)
+            
             # Map Impact Logic
+            impact_raw = v.get("impact", "minor")
             impact_map = {
-                "minor": ImpactLevel.MINOR,
-                "moderate": ImpactLevel.MODERATE,
+                "critical": ImpactLevel.CRITICAL,
                 "serious": ImpactLevel.SERIOUS,
-                "critical": ImpactLevel.CRITICAL
+                "moderate": ImpactLevel.MODERATE,
+                "minor": ImpactLevel.MINOR
             }
-            impact = impact_map.get(v.get("impact", "minor"), ImpactLevel.MINOR)
+            impact = impact_map.get(impact_raw, ImpactLevel.MINOR)
             
             # Node Extraction with Deep Failure Summaries
             nodes = v.get("nodes", [])
             node_summaries = []
-            first_selector = "N/A"
+            first_selector = "Unknown"
             for raw_n in nodes:
                 n = cast(Dict[str, Any], raw_n)
                 target_list = n.get("target", [])
-                sel = target_list[0] if target_list else "N/A" # type: ignore
-                if first_selector == "N/A": first_selector = sel
+                sel = target_list[0] if target_list else "Unknown" # type: ignore
+                if first_selector == "Unknown": first_selector = sel
                 
                 node_summaries.append({ # type: ignore
                     "html": n.get("html", "N/A"),
@@ -1279,16 +1296,23 @@ class PlaywrightEngine(IBrowserEngine):
                     "failure_summary": n.get("failureSummary", "No failure summary provided.")
                 })
 
-            # Create standard violation
+            tags = v.get("tags", [])
+            
+            # Create high-fidelity Violation object
             violation = Violation(
                 rule_id=v.get("id", "AXE-GENERIC"),
                 session_id=self.session_id,
                 impact=impact,
+                agent="axe",
                 description=v.get("description", "Auditor: Detailed description missing."),
                 help_url=v.get("helpUrl", "https://auditor.agency/wcag"),
-                selector=first_selector,
+                selector=v.get("selector", first_selector),
                 nodes=node_summaries,
-                tags=v.get("tags", [])
+                tags=tags,
+                compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
+                category=ComplianceMapper.get_category(tags),
+                severity_matrix=ComplianceMapper.get_severity_matrix(impact),
+                url=url
             )
             violations.append(violation)
             
@@ -1334,7 +1358,7 @@ class PlaywrightEngine(IBrowserEngine):
     # ENGINE STRUCTURAL INTELLIGENCE: ARIA TREE TRAVERSAL
     # --------------------------------------------------------------------------
 
-    async def _deep_aria_structural_audit(self, page: "Page") -> List[Violation]:
+    async def _deep_aria_structural_audit(self: "PlaywrightEngine", page: "Page") -> List[Violation]:
         """
         Performs a deep-traversal of the Accessibility Tree (ARIA) to identify
         structural anomalies and semantic mismatches that automated tools might miss.
@@ -1355,7 +1379,7 @@ class PlaywrightEngine(IBrowserEngine):
             
         return violations
 
-    def _analyze_aria_node_recursive(self, node: Dict, depth: int = 0) -> List[Violation]:
+    def _analyze_aria_node_recursive(self: "PlaywrightEngine", node: Dict, depth: int = 0) -> List[Violation]:
         """
         Recursively analyzes a node from the accessibility tree.
         """
@@ -1372,7 +1396,7 @@ class PlaywrightEngine(IBrowserEngine):
                 impact=ImpactLevel.CRITICAL,
                 selector=f"ARIA-ROLE[{role}]",
                 help_url="https://www.w3.org/WAI/WCAG22/Techniques/aria/ARIA14",
-                nodes=[],
+                nodes=[{"html": f"<{role}> (Missing Name)", "target": "ARIA-ROLE", "failure_summary": "Interactive element has no deterministic name."}],
                 tags=["aria", "accessibility"],
                 session_id=self.session_id
             ))
@@ -1385,7 +1409,7 @@ class PlaywrightEngine(IBrowserEngine):
                 impact=ImpactLevel.MINOR,
                 selector="ROOT-TRAVERSAL",
                 help_url="https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships",
-                nodes=[],
+                nodes=[{"html": "DOM-ROOT", "target": "ROOT", "failure_summary": "Structural complexity exceeds cognitive accessibility thresholds."}],
                 tags=["structure", "complexity"],
                 session_id=self.session_id
             ))

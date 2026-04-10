@@ -9,12 +9,20 @@ the browser closes.
 Produces a PageData object consumed by all accessibility agents.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 import asyncio
 
-from auditor.shared.logging import auditor_logger
+from auditor.shared.logging import auditor_logger # type: ignore
 
 logger = auditor_logger.getChild("DataExtractor")
 
@@ -52,7 +60,7 @@ class PageData:
 
 EXTRACT_LINKS_JS = """() => {
     const links = Array.from(document.querySelectorAll('a'));
-    return links.slice(0, 200).map(el => {
+    return links.slice(0, 2000).map(el => {
         const style = window.getComputedStyle(el);
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
@@ -96,9 +104,9 @@ EXTRACT_LINKS_JS = """() => {
 
 EXTRACT_TEXT_ELEMENTS_JS = """() => {
     const elements = Array.from(document.querySelectorAll(
-        'p, span, li, td, th, label, strong, em, mark, ins, del, .text-danger, .text-success, .text-warning, .error, .success, .warning, [class*="status"], [class*="alert"]'
+        'p, span, li, td, th, label, strong, em, mark, ins, del, div, section, article, h1, h2, h3, h4, h5, h6, .text-danger, .text-success, .text-warning, .error, .success, .warning, [class*="status"], [class*="alert"]'
     ));
-    return elements.slice(0, 300).map(el => {
+    return elements.slice(0, 3000).map(el => {
         const style = window.getComputedStyle(el);
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
@@ -142,7 +150,7 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
     const elements = Array.from(document.querySelectorAll(
         'input, select, textarea, [role="textbox"], [role="combobox"], [role="listbox"]'
     ));
-    return elements.slice(0, 150).map(el => {
+    return elements.slice(0, 1000).map(el => {
         const style = window.getComputedStyle(el);
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
@@ -191,7 +199,7 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
 
 EXTRACT_IMAGES_JS = """() => {
     const images = Array.from(document.querySelectorAll('img, svg, canvas, [role="img"]'));
-    return images.slice(0, 100).map(el => {
+    return images.slice(0, 1000).map(el => {
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
 
@@ -307,6 +315,6 @@ async def extract_page_data(
         text_elements=text_elements,
         form_elements=form_elements,
         images=images,
-        screenshot=screenshot,
+        screenshot=cast(Optional[bytes], screenshot),
         session_id=session_id,
     )

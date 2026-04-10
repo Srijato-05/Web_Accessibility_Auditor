@@ -5,12 +5,20 @@ Analyzes the clarity and predictability of the interface.
 WCAG Focus: 3.3.2 Labels, 2.4.4 Link Purpose.
 """
 
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from typing import List
-from auditor.domain.agent_finding import AgentFinding
-from auditor.infrastructure.data_extractor import PageData
-from auditor.domain.interfaces import IAccessibilityAgent
-from auditor.application.agents.rules.cognitive_rules import is_ambiguous_link, is_missing_label_logic
-from auditor.shared.logging import auditor_logger
+from auditor.domain.agent_finding import AgentFinding # type: ignore
+from auditor.infrastructure.data_extractor import PageData # type: ignore
+from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
+from auditor.application.agents.rules.cognitive_rules import is_ambiguous_link, is_missing_label_logic # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
 
 
 class CognitiveAgent(IAccessibilityAgent):

@@ -8,7 +8,7 @@ at the site level.
 """
 
 import asyncio
-from typing import Set, List
+from typing import Set, List, cast
 from urllib.parse import urlparse
 from datetime import datetime
 import sys
@@ -19,11 +19,14 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from auditor.domain.crawler import LinkDiscoveryService
-from auditor.application.audit_service import AuditService
-from auditor.shared.logging import auditor_logger
-from auditor.domain.exceptions import AuditFailedError
-from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
+from auditor.domain.crawler import LinkDiscoveryService # type: ignore
+from auditor.application.audit_service import AuditService # type: ignore
+from auditor.shared.logging import auditor_logger # type: ignore
+from auditor.domain.exceptions import AuditFailedError # type: ignore
+from auditor.infrastructure.tigergraph_repository import TigerGraphRepository # type: ignore
+from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
+from auditor.domain.violation import Violation # type: ignore
+from auditor.application.reporter import AuditReporter # type: ignore
 
 class CrawlService:
     """
@@ -106,7 +109,30 @@ class CrawlService:
             await asyncio.sleep(0.01)
 
         # Await process completion
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # AGGREGATION PHASE
+        all_violations = []
+        for res in results:
+            if isinstance(res, AuditSession):
+                session: AuditSession = cast(AuditSession, res)
+                if session.status == SessionStatus.COMPLETED:
+                    all_violations.extend(session.violations)
+
+        self.logger.info(f"Aggregated {len(all_violations)} violations across {self.success_count} pages.")
+        
+        # Master Reporting
+        if all_violations:
+            
+            # Create a virtual session for the whole crawl
+            master_session = AuditSession(target_url=start_url)
+            master_session.status = SessionStatus.COMPLETED
+            master_session.violations = all_violations
+            
+            # Use the existing repository from the audit service
+            reporter = AuditReporter(self.audit_service.repository) 
+            reporter.generate_summary_report(master_session, all_violations)
+            self.logger.info(f"MASTER MISSION REPORT GENERATED for {start_url}")
         
         # AUDIT SUMMARY
         duration = datetime.now() - start_time
@@ -124,7 +150,7 @@ class CrawlService:
             
             try:
                 # 1. SCANNING PHASE
-                await self.audit_service.execute_audit(url)
+                session = await self.audit_service.execute_audit(url)
                 self.success_count += 1
                 
                 # 2. DISCOVERY PHASE (Only if within session bounds)
@@ -157,9 +183,13 @@ class CrawlService:
             except AuditFailedError as e:
                 self.logger.warning(f"Auditor reported audit failure for {url}: {e}")
                 self.failed_count += 1
+                return None
             except Exception as e:
                 self.logger.error(f"Critical anomaly during scan of {url}: {e}")
                 self.failed_count += 1
+                return None
+            
+            return session
 
     # --------------------------------------------------------------------------
     # TECHNICAL HELPERS

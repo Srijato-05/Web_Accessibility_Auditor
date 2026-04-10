@@ -1,4 +1,12 @@
 from __future__ import annotations
+import os
+import sys
+
+# IDE PATH RECONCILIATION: Ensure internal module resolution
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -6,7 +14,7 @@ from typing import List, Optional, TYPE_CHECKING, Any, Dict
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
-    from auditor.domain.violation import Violation
+    from auditor.domain.violation import Violation # type: ignore
 
 class SessionStatus(Enum):
     CREATED = "created"

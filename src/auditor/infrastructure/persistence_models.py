@@ -51,6 +51,13 @@ class ViolationModel(SQLModel, table=True):
     nodes: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     tags: List[str] = Field(default=[], sa_column=Column(JSON))
     
+    # Advanced Forensics (Phase XII)
+    agent: str = Field(default="axe")
+    compliance_level: Optional[str] = None
+    category: Optional[str] = None
+    severity_matrix: Optional[str] = None
+    url: Optional[str] = None
+    
     session: Optional[AuditSessionModel] = Relationship(back_populates="violations")
 
 class TargetModel(SQLModel, table=True):
