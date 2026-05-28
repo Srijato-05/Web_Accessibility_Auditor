@@ -27,8 +27,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     client.get('/dashboard/summary')
-      .then(res => setSummary(res.data))
-      .catch(e => {
+      .then((res: any) => setSummary(res.data))
+      .catch((e: any) => {
         console.error(e);
         setSummary({ health_score: 0, rating: "-", issues: { critical: 0, major: 0, minor: 0 }, recent_scans: [] });
       });
@@ -95,7 +95,7 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {summary.recent_scans.map((log) => (
+                      {summary.recent_scans.map((log: any) => (
                         <tr key={log.id} onClick={() => navigate('/insights/' + log.id)} className="border-b border-surface-border hover:bg-surface-highlight cursor-pointer transition-colors last:border-b-0 group">
                           <td className="px-6 py-4 text-sm font-medium text-on-surface group-hover:text-primary transition-colors flex items-center gap-3">
                              <div className="w-1.5 h-1.5 rounded-full bg-surface-highlight group-hover:bg-primary transition-all"></div>
@@ -106,9 +106,10 @@ export default function Dashboard() {
                           </td>
                           <td className="px-6 py-4 text-center">
                               <button 
-                                onClick={(e) => {
+                                onClick={(e: any) => {
                                   e.stopPropagation();
-                                  window.open(`http://localhost:8000/api/reports/${log.id}/download`, '_blank');
+                                  const apiBase = client.defaults.baseURL || 'http://localhost:8000/api';
+                                  window.open(`${apiBase}/reports/${log.id}/download`, '_blank');
                                 }}
                                 className="p-2 hover:bg-primary/10 rounded-full text-on-surface-variant hover:text-primary transition-all group/btn"
                                 title="Download forensic pdf"

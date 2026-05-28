@@ -15,12 +15,10 @@ interface Violation {
 
 export default function Insights() {
   const [violations, setViolations] = useState<Violation[]>([]);
-  const [recentScans, setRecentScans] = useState<any[]>([]);
   const { audit_id } = useParams();
   const navigate = useNavigate();
   const [regenerating, setRegenerating] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<string>('loading');
-  const [remediationPlan, setRemediationPlan] = useState<string>('');
 
   useEffect(() => {
     if (!audit_id) return;
@@ -31,7 +29,6 @@ export default function Insights() {
       try {
         const res = await client.get(`/sessions/${audit_id}`);
         setSessionStatus(res.data.status);
-        setRemediationPlan(res.data.remediation_plan || '');
         setViolations(res.data.violations || []);
         
         if (res.data.status === 'completed' || res.data.status === 'failed') {
@@ -42,21 +39,15 @@ export default function Insights() {
       }
     };
 
-    const fetchSummary = () => {
-       client.get('/dashboard/summary')
-         .then(res => setRecentScans(res.data.recent_scans || []))
-         .catch(e => console.error(e));
-    };
-
     fetchAllData();
-    fetchSummary();
     interval = setInterval(fetchAllData, 3000); 
 
     return () => clearInterval(interval);
   }, [audit_id]);
 
   const handleDownloadPDF = () => {
-    window.open(`http://localhost:8000/api/reports/${audit_id}/download`, '_blank');
+    const apiBase = client.defaults.baseURL || 'http://localhost:8000/api';
+    window.open(`${apiBase}/reports/${audit_id}/download`, '_blank');
   };
 
   const handleRegenerate = async () => {
@@ -73,11 +64,11 @@ export default function Insights() {
     }
   };
 
-  const criticalCount = violations.filter(v => v.severity === 'Critical').length;
-  const majorCount = violations.filter(v => v.severity === 'Major').length;
-  const minorCount = violations.filter(v => v.severity === 'Minor').length;
+  const criticalCount = violations.filter((v: Violation) => v.severity === 'Critical').length;
+  const majorCount = violations.filter((v: Violation) => v.severity === 'Major').length;
+  const minorCount = violations.filter((v: Violation) => v.severity === 'Minor').length;
   
-  const agentCount = violations.filter(v => v.type && v.type.startsWith('AGENT-')).length;
+  const agentCount = violations.filter((v: Violation) => v.type && v.type.startsWith('AGENT-')).length;
   const standardCount = violations.length - agentCount;
 
   const total = violations.length || 1;
@@ -85,16 +76,6 @@ export default function Insights() {
   const criticalPct = (criticalCount / total) * 100;
   const majorPct = (majorCount / total) * 100;
   const minorPct = (minorCount / total) * 100;
-
-  const impactIcon = (_severity: string) => {
-    return null;
-  };
-
-  const impactColor = (severity: string) => {
-    if (severity === 'Critical') return 'text-error bg-error-bg border-error/50';
-    if (severity === 'Major') return 'text-warning bg-warning-bg border-warning/50';
-    return 'text-secondary border-secondary/50 bg-secondary/10';
-  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 pb-32">
