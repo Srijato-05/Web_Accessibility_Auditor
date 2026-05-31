@@ -44,14 +44,16 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             await self._ensure_schema_integrity()
             self._schema_verified = True
             
-        self.logger.debug(f"Saving Session: {session.id} | Status: {session.status.value}")
+        self.logger.debug(f"Saving Session: {session.id} | Status: {session.status_value}")
         
         try:
+            status_str = session.status_value.lower()
+            
             async with self._lock:
                 model = AuditSessionModel(
                     id=session.id,
                     target_url=session.target_url,
-                    status=session.status,
+                    status=status_str,
                     created_at=session.created_at,
                     updated_at=session.updated_at,
                     started_at=session.started_at,
@@ -63,7 +65,10 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     remediation_plan=session.remediation_plan
                 )
                 await self.db_session.merge(model)
-                await self.db_session.commit()
+                if self.db_session.in_transaction():
+                    await self.db_session.flush()
+                else:
+                    await self.db_session.commit()
         except Exception as e:
             self.logger.critical(f"PERSISTENCE FAILURE [Session {session.id}]: {e}")
             raise RepositoryError(f"Database commitment failure: {e}")
@@ -76,16 +81,28 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self._schema_verified = True
             
         try:
+            self.db_session.expire_all()
             statement = select(AuditSessionModel).where(AuditSessionModel.id == session_id).options(selectinload(AuditSessionModel.violations))
             results = await self.db_session.exec(statement)
             result = results.first()
             if not result:
                 raise RepositoryError(f"Session {session_id} not found.")
             
+            # Coerce result.status to Domain SessionStatus Enum
+            from auditor.infrastructure.persistence_models import SessionStatus as DomainSessionStatus
+            r_status = result.status
+            if hasattr(r_status, "value"):
+                status_str = r_status.value
+            else:
+                status_str = str(r_status)
+            if "." in status_str:
+                status_str = status_str.split(".")[-1]
+            status_enum = DomainSessionStatus[status_str.upper()]
+            
             return AuditSession(
                 id=result.id,
                 target_url=result.target_url,
-                status=result.status,
+                status=status_enum,
                 created_at=result.created_at,
                 updated_at=result.updated_at,
                 started_at=result.started_at,
@@ -96,13 +113,18 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                 violations=[
                     Violation(
                         rule_id=v.rule_id,
-                        impact=ImpactLevel(v.impact),
+                        impact=ImpactLevel(v.impact) if isinstance(v.impact, str) else v.impact,
                         description=v.description,
                         help_url=v.help_url,
                         selector=v.selector or "",
                         nodes=v.nodes or [],
                         tags=v.tags or [],
-                        session_id=v.session_id
+                        session_id=v.session_id,
+                        agent=v.agent or "axe",
+                        compliance_level=v.compliance_level,
+                        category=v.category,
+                        severity_matrix=v.severity_matrix,
+                        url=v.url
                     ) for v in result.violations
                 ]
             )
@@ -142,7 +164,10 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     )
                     self.db_session.add(model)
                 
-                await self.db_session.commit()
+                if self.db_session.in_transaction():
+                    await self.db_session.flush()
+                else:
+                    await self.db_session.commit()
             self.logger.debug("Batch commit SUCCESS.")
         except Exception as e:
             self.logger.error(f"BATCH COMMIT FAILURE: {e}")
@@ -156,16 +181,28 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self._schema_verified = True
             
         try:
+            self.db_session.expire_all()
             stmt = select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()).limit(limit).options(selectinload(AuditSessionModel.violations))
             result = await self.db_session.exec(stmt)
             models = result.all()
             
             sessions = []
             for m in models:
+                # Coerce m.status to Domain SessionStatus Enum
+                from auditor.infrastructure.persistence_models import SessionStatus as DomainSessionStatus
+                r_status = m.status
+                if hasattr(r_status, "value"):
+                    status_str = r_status.value
+                else:
+                    status_str = str(r_status)
+                if "." in status_str:
+                    status_str = status_str.split(".")[-1]
+                status_enum = DomainSessionStatus[status_str.upper()]
+
                 session = AuditSession(
                     id=m.id,
                     target_url=m.target_url,
-                    status=m.status,
+                    status=status_enum,
                     created_at=m.created_at,
                     updated_at=m.updated_at,
                     started_at=m.started_at,

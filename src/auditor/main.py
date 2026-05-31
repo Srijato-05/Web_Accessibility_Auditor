@@ -15,9 +15,16 @@ if sys.platform == 'win32':
 from fastapi import FastAPI # type: ignore
 from fastapi.middleware.cors import CORSMiddleware # type: ignore
 
-from auditor.presentation.api import router as api_router # type: ignore
+from auditor.presentation.api import router as api_router, init_db # type: ignore
 
-app = FastAPI(title="Accessibility Auditor API")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+app = FastAPI(title="Accessibility Auditor API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

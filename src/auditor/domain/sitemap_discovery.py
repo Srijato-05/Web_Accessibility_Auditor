@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup # type: ignore
 import os
 import sys
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _root not in sys.path:
+if _root not in sys.path:  # pragma: no cover
     sys.path.insert(0, _root)
 
 from auditor.shared.logging import auditor_logger # type: ignore
@@ -86,8 +86,5 @@ class SitemapDiscoveryEngine:
         except Exception as top_e:
             self.logger.error(f"Sitemap Engine Critical Failure: {top_e}")
             
-        self.logger.info(f"Discovery Complete. Identified {len(discovered)} unique targets.")
-        return discovered
-                    
         self.logger.info(f"Discovery Complete. Identified {len(discovered)} unique targets.")
         return discovered

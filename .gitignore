@@ -41,9 +41,12 @@ auditor_evidence_*.png
 node_modules/
 dist/
 coverage/
+.coverage
+htmlcov/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 pyrightconfig.json
 reports/
 tmp/
+.DS_Store

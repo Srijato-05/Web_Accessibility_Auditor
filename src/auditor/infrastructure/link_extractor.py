@@ -12,7 +12,7 @@ class PlaywrightLinkExtractor(ILinkExtractor):
     async def start(self):
         """Initializes the persistent browser instance for link extraction."""
         if not self.browser:
-            mgr = await async_playwright.start()
+            mgr = await async_playwright().start()
             self.playwright_mgr = mgr
             # Using casting to satisfy the type checker for the dynamic 'chromium' attribute
             self.browser = await cast(Any, mgr).chromium.launch(headless=True)

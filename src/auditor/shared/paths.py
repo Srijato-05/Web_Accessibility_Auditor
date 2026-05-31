@@ -26,6 +26,7 @@ LOGS_DIR = REPORTS_DIR / "logs"
 for d in [REPORTS_DIR, DATA_DIR, EXPORTS_DIR, LOGS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# Database Config
+# Database & Broker Config
 DATABASE_PATH = DATA_DIR / "audit_results.db"
-DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATABASE_PATH}")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")

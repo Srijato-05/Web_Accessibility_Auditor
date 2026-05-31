@@ -63,7 +63,7 @@ class RedisTaskQueue:
     async def disconnect(self):
         """Cleanup resources and release hardware handles."""
         if self.redis:
-            await self.redis.close() # type: ignore
+            await self.redis.aclose() # type: ignore
             self.redis = None
         self.logger.info("Infrastructure handles released.")
 
@@ -116,7 +116,7 @@ class RedisTaskQueue:
                     TaskModel.metadata_json
                 ).where(TaskModel.status == "PENDING").order_by(TaskModel.created_at.asc()).limit(1)
                 
-                res = await session.execute(stmt)
+                res = await session.exec(stmt)
                 row = res.first()
                 
                 if row:
@@ -125,7 +125,7 @@ class RedisTaskQueue:
                     # 2. Update status in a separate transactional block (or same session)
                     self.logger.info(f"Task Dequeued from Ledger: [{task_type}] {task_id}")
                     update_stmt = update(TaskModel).where(TaskModel.id == task_id).values(status="PROCESSING")
-                    await session.execute(update_stmt)
+                    await session.exec(update_stmt)
                     await session.commit()
                     
                     return {
@@ -149,7 +149,7 @@ class RedisTaskQueue:
             async with AsyncSession(self.engine) as session:
                 # Reset processing AND failed ones from the previous NameError crash
                 stmt = update(TaskModel).where(or_(TaskModel.status == "PROCESSING", TaskModel.status == "FAILED")).values(status="PENDING")
-                await session.execute(stmt)
+                await session.exec(stmt)
                 await session.commit()
             self.logger.info("Self-Healing: Autonomous Ledger Reset to PENDING.")
 
@@ -160,8 +160,8 @@ class RedisTaskQueue:
         if self.engine:
             from sqlmodel import func # type: ignore
             async with AsyncSession(self.engine) as session:
-                res = await session.execute(select(func.count()).select_from(TaskModel).where(TaskModel.status == "PENDING"))
-                return res.scalar() or 0
+                res = await session.exec(select(func.count()).select_from(TaskModel).where(TaskModel.status == "PENDING"))
+                return res.first() or 0
         return 0
 
     async def complete_task(self, task_id: Any):
@@ -171,7 +171,7 @@ class RedisTaskQueue:
         elif self.engine and task_id:
             async with AsyncSession(self.engine) as session:
                 stmt = update(TaskModel).where(TaskModel.id == task_id).values(status="COMPLETED")
-                await session.execute(stmt)
+                await session.exec(stmt)
                 await session.commit()
 
     async def fail_task(self, task_id: Any, error: str):
@@ -182,8 +182,8 @@ class RedisTaskQueue:
             async with AsyncSession(self.engine) as session:
                 # 1. Fetch current metadata first (atomic rename/merge is tricky in SQLite JSON)
                 stmt = select(TaskModel.metadata_json).where(TaskModel.id == task_id)
-                res = await session.execute(stmt)
-                meta = res.scalar() or {}
+                res = await session.exec(stmt)
+                meta = res.first() or {}
                 
                 # 2. Update with error detail
                 new_meta = dict(meta)
@@ -193,5 +193,5 @@ class RedisTaskQueue:
                     status="FAILED",
                     metadata_json=new_meta
                 )
-                await session.execute(update_stmt)
+                await session.exec(update_stmt)
                 await session.commit()

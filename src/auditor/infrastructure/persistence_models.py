@@ -21,7 +21,7 @@ class AuditSessionModel(SQLModel, table=True):
     
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     target_url: str = Field(index=True)
-    status: SessionStatus = Field(default=SessionStatus.CREATED)
+    status: str = Field(default="created")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
@@ -64,7 +64,7 @@ class TargetModel(SQLModel, table=True):
     __tablename__ = "targets"
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     url: str = Field(index=True)
-    status: DomainStatus = Field(default=DomainStatus.PENDING)
+    status: str = Field(default="pending")
     created_at: datetime = Field(default_factory=datetime.now)
     last_audit_at: Optional[datetime] = None
     frequency_hours: Optional[Dict[str, Any]] = Field(sa_column=Column(JSON))

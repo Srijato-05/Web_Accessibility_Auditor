@@ -1,0 +1,22 @@
+[run]
+branch = True
+source = src/auditor
+omit =
+    */__init__.py
+    */py.typed
+
+[report]
+# Custom exclusion patterns
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    except ImportError:
+    pass
+    raise EngineError
+    raise AuditFailedError
+
+show_missing = True
+skip_empty = True

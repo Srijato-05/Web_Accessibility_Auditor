@@ -28,16 +28,42 @@ from auditor.application.audit_service import AuditService # type: ignore
 from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
 from auditor.infrastructure.pdf_reporter import convert_json_to_pdf # type: ignore
 import glob
+import socket
 from urllib.parse import urlparse
 
-from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT # type: ignore
+from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT, REDIS_URL # type: ignore
+from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
 router = APIRouter()
+
+def is_safe_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        
+        allow_local = os.getenv("AUDITOR_ALLOW_LOCAL", "true").lower() == "true"
+        if not allow_local:
+            if hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+                return False
+            try:
+                ip = socket.gethostbyname(hostname)
+                if ip.startswith(("127.", "10.", "172.16.", "192.168.", "169.254.")):
+                    return False
+            except socket.gaierror:
+                return False
+        return True
+    except Exception:
+        return False
 
 # Global Path Legacy Support
 BASE_DIR = str(PROJECT_ROOT)
 
 # Unified Database Configuration
 engine = create_async_engine(DATABASE_URL, echo=False)
+task_queue = RedisTaskQueue(REDIS_URL, db_engine=engine)
 
 async def init_db():
     async with engine.begin() as conn:
@@ -46,6 +72,7 @@ async def init_db():
 class AuditRequest(BaseModel):
     url: str
     scan_type: str = "precision"
+    use_queue: bool = False
 
 async def async_run_audit_worker(url: str):
     async with AsyncSession(engine) as db_session:
@@ -58,23 +85,10 @@ async def async_run_audit_worker(url: str):
             # BRIDGE: Match the robust single_url.py post-processing logic
             if session and session.status.value == "completed":
                 try:
-                    # Reconciliation for reports layout
-                    reports_out = str(EXPORTS_DIR)
-                    
-                    # 1. Identify JSON findings exported by agents
-                    short_id = str(session.id)[:8] # type: ignore
-                    findings_pattern = os.path.join(reports_out, f"agent_findings_{short_id}_*.json")
-                    domain = urlparse(url).netloc.replace("www.", "")
-                    findings_pattern_url = os.path.join(reports_out, f"{domain}_*.json")
-                    
-                    matches = glob.glob(findings_pattern) + glob.glob(findings_pattern_url)
-                    
-                    if matches:
-                        latest_json = max(matches, key=os.path.getctime)
-                        out_pdf = latest_json.replace(".json", ".pdf")
-                        
-                        # Offload to a thread to avoid blocking or loop conflicts with sync playwright
-                        await asyncio.to_thread(convert_json_to_pdf, latest_json, out_pdf)
+                    # Generate the combined JSON, HTML, and PDF report using AuditReporter
+                    from auditor.application.reporter import AuditReporter
+                    reporter = AuditReporter(db_session)
+                    await reporter.generate_summary_report(session_id=session.id)
                 except Exception as post_e:
                     import logging
                     logging.getLogger("auditor.api").error(f"Post-Audit PDF Generation Failed: {post_e}")
@@ -84,6 +98,9 @@ async def async_run_audit_worker(url: str):
 
 @router.post("/audit")
 async def start_audit(req: AuditRequest, background_tasks: BackgroundTasks):
+    if not is_safe_url(req.url):
+        raise HTTPException(status_code=400, detail="Unsafe or invalid URL provided.")
+
     # Sanity Check for Windows Proactor Loop
     if sys.platform == 'win32':
         loop = asyncio.get_running_loop()
@@ -96,25 +113,26 @@ async def start_audit(req: AuditRequest, background_tasks: BackgroundTasks):
             logger.critical(f"ENGINE CRITICAL: Non-Proactor Loop ('{loop_type}') detected. Playwright subprocesses WILL fail.")
             # We don't raise 500 here yet, just log it, to see if the audit proceeds anyway
             # or if it's a false positive on the type name.
-
-    await init_db()
     
     # Pre-create session to capture ID for the frontend immediately
     async with AsyncSession(engine) as db_session:
-        repository = SqlAlchemyAuditRepository(db_session)
-        session = AuditSession(target_url=req.url)
-        session.status = SessionStatus.IN_PROGRESS
-        await repository.save_session(session)
-        session_id = str(session.id)
+        async with db_session.begin():
+            repository = SqlAlchemyAuditRepository(db_session)
+            session = AuditSession(target_url=req.url)
+            session.status = SessionStatus.IN_PROGRESS
+            await repository.save_session(session)
+            session_id = str(session.id)
     
-    # AuditService will find this IN_PROGRESS session and resume it
-    background_tasks.add_task(async_run_audit_worker, req.url)
-    
-    return {"session_id": session_id, "status": "started"}
+    if req.use_queue:
+        await task_queue.push_task("single_url_audit", {"url": req.url})
+        return {"session_id": session_id, "status": "queued"}
+    else:
+        # AuditService will find this IN_PROGRESS session and resume it
+        background_tasks.add_task(async_run_audit_worker, req.url)
+        return {"session_id": session_id, "status": "started"}
 
 @router.get("/dashboard/summary")
 async def get_dashboard_summary():
-    await init_db()
     async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
         recent = await repository.list_recent_sessions(limit=100)
@@ -171,7 +189,7 @@ async def get_dashboard_summary():
                 "minor": total_minor,
             },
             "recent_scans": recent_scans,
-            "network_propagation": "TigerGraph Connected" if total_critical >= 0 else "Disconnected",
+            "network_propagation": "Neo4j Connected" if total_critical >= 0 else "Disconnected",
             "ai_confidence": "97%",
             "agent_insights": {
                 "total_missions": len(recent),
@@ -182,7 +200,6 @@ async def get_dashboard_summary():
 
 @router.get("/audits/{audit_id}/violations")
 async def get_audit_violations(audit_id: str):
-    await init_db()
     try:
         parsed_id = UUID(audit_id)
     except ValueError:
@@ -219,8 +236,13 @@ async def get_audit_violations(audit_id: str):
                 target_str = str(v.nodes[0].get("target", target_str))
                 html_str = str(v.nodes[0].get("html", ""))
                 
+            session_str = str(audit_id)
+            rule_str = v.rule_id or "generic"
+            selector_str = target_str or ""
+            stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
+
             result.append({
-                "id": str(uuid.uuid4()), # Generate transient IDs for the frontend issue-detail routes
+                "id": stable_id, # Stable and deterministic UUID
                 "rule_id": v.rule_id,
                 "impact": impact_val,
                 "description": v.description,
@@ -246,77 +268,24 @@ async def fix_violation(violation_id: str):
 async def remediate_audit(audit_id: str):
     return {"status": "success", "message": "Audit remediated"}
 
-from auditor.infrastructure.tigergraph_repository import TigerGraphRepository # type: ignore
+from auditor.infrastructure.neo4j_repository import Neo4jRepository # type: ignore
 import asyncio
 
 @router.get("/audits/{audit_id}/graph")
 async def get_audit_graph(audit_id: str):
-    tg_repo = TigerGraphRepository()
-    if not tg_repo.conn:
-        return {"nodes": [], "edges": []}
+    graph_repo = Neo4jRepository()
+    if not graph_repo.driver:
+        return {"nodes": [], "links": []}
     
     def fetch_graph() -> dict:
-        nodes = []
-        edges = []
-        try:
-            # Validate schema exists to prevent 'not a valid vertex type' exceptions from pyTigerGraph
-            valid_types = tg_repo.conn.getVertexTypes()
-            
-            if "Page" in valid_types:
-                pages = tg_repo.conn.getVertices("Page", limit=100) or []
-                for p in pages:
-                    nodes.append({
-                        "id": p.get("v_id"),
-                        "label": p.get("v_id")[:30] + "...",
-                        "type": "page"
-                    })
-                    page_edges = tg_repo.conn.getEdges("Page", p.get("v_id"), edgeType="PAGE_CONTAINS") or []
-                    for e in page_edges:
-                        edges.append({
-                            "source": p.get("v_id"),
-                            "target": e.get("to_id")
-                        })
-
-            if "Component" in valid_types:
-                components = tg_repo.conn.getVertices("Component", limit=100) or []
-                for c in components:
-                    nodes.append({
-                        "id": c.get("v_id"),
-                        "label": "DOM Element",
-                        "type": "component"
-                    })
-                    comp_edges = tg_repo.conn.getEdges("Component", c.get("v_id"), edgeType="COMPONENT_TRIGGERS") or []
-                    for e in comp_edges:
-                        edges.append({
-                            "source": c.get("v_id"),
-                            "target": e.get("to_id")
-                        })
-
-            if "Violation" in valid_types:
-                violations = tg_repo.conn.getVertices("Violation", limit=100) or []
-                for v in violations:
-                    if not any(n["id"] == v.get("v_id") for n in nodes):
-                        impact = v.get("attributes", {}).get("impact", "minor")
-                        node_type = "violation_critical" if impact.lower() == "critical" else (
-                            "violation_major" if impact.lower() in ("major", "serious") else "violation"
-                        )
-                        nodes.append({
-                            "id": v.get("v_id"),
-                            "label": v.get("v_id"),
-                            "type": node_type
-                        })
-
-            return {"nodes": nodes, "links": edges}
-        except Exception as e:
-            # Silently return empty graph if TigerGraph schema isn't fully published
-            return {"nodes": [], "links": []}
+        return graph_repo.get_graph_data()
             
     return await asyncio.to_thread(fetch_graph) # type: ignore
 
 @router.get("/audits/{audit_id}/graph-insights")
 async def get_graph_insights(audit_id: str):
-    tg_repo = TigerGraphRepository()
-    if not tg_repo.conn:
+    graph_repo = Neo4jRepository()
+    if not graph_repo.driver:
         return {
           "impact_probability": "High",
           "top_node": "DOM Root",
@@ -329,39 +298,7 @@ async def get_graph_insights(audit_id: str):
         }
     
     def fetch_insights() -> dict:
-        try:
-            valid_types = tg_repo.conn.getVertexTypes()
-            
-            # Let's count some real data from TigerGraph for a dynamic insight
-            violations = tg_repo.conn.getVertices("Violation", limit=100) if "Violation" in valid_types else []
-            components = tg_repo.conn.getVertices("Component", limit=100) if "Component" in valid_types else []
-            pages = tg_repo.conn.getVertices("Page", limit=100) if "Page" in valid_types else []
-            
-            top_node_label = "Dynamic Component"
-            if components:
-                top_node_label = components[0].get("v_id")[:30]
-                
-            return {
-              "impact_probability": "Critical" if len(violations) > 10 else "Moderate",
-              "top_node": top_node_label,
-              "component_id": "CMP-" + str(len(components)),
-              "reach": len(pages),
-              "violations_prevented": len(violations),
-              "structural_complexity": f"O({len(components) * len(pages)})",
-              "recommended": len(violations) > 0,
-              "specific_fix": "Patch core template framework"
-            }
-        except Exception:
-            return {
-              "impact_probability": "Unknown",
-              "top_node": "Error",
-              "component_id": "Error",
-              "reach": 0,
-              "violations_prevented": 0,
-              "structural_complexity": "O(1)",
-              "recommended": False,
-              "specific_fix": ""
-            }
+        return graph_repo.get_graph_insights()
             
     return await asyncio.to_thread(fetch_insights) # type: ignore
 
@@ -375,11 +312,14 @@ async def get_graph_visualization():
 
 @router.get("/ping-graph")
 async def ping_graph():
-    return {"status": "ok"}
+    repo = Neo4jRepository()
+    if repo.ping():
+        return {"status": "online"}
+    else:
+        return {"status": "offline"}
 
 @router.get("/audits/history")
 async def get_history():
-    await init_db()
     async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
         recent = await repository.list_recent_sessions(limit=20)
@@ -408,7 +348,6 @@ async def export_logs():
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
-    await init_db()
     try:
         parsed_id = UUID(session_id)
     except ValueError:
@@ -436,44 +375,50 @@ async def get_session(session_id: str):
 @router.get("/reports/{session_id}/download")
 async def download_report(session_id: str, background_tasks: BackgroundTasks):
     reports_out = str(EXPORTS_DIR)
-    
-    # Try finding the PDF by session ID prefix
     short_id = str(session_id)[:8] # type: ignore
-    findings_pattern = os.path.join(reports_out, f"agent_findings_{short_id}_*.pdf")
-    matches = glob.glob(findings_pattern)
+    
+    # 1. Look for combined report first
+    combined_pattern = os.path.join(reports_out, f"audit_report_{short_id}_*.pdf")
+    matches = glob.glob(combined_pattern)
     
     if not matches:
-        # Fallback 1: check if the session exists and try to find by target URL netloc
+        # Fallback 1: Try on-the-fly regeneration using AuditReporter
+        async with AsyncSession(engine) as db_session:
+            repository = SqlAlchemyAuditRepository(db_session)
+            try:
+                session = await repository.get_session(UUID(session_id))
+                if session:
+                    import logging
+                    logger = logging.getLogger("auditor.api")
+                    logger.info(f"Combined PDF missing for session {session_id}. Generating on-the-fly...")
+                    
+                    from auditor.application.reporter import AuditReporter # type: ignore
+                    reporter = AuditReporter(db_session)
+                    report_paths = await reporter.generate_summary_report(session_id=session_id)
+                    if report_paths.get("pdf"):
+                        matches = [report_paths["pdf"]]
+            except Exception as e:
+                import logging
+                logging.getLogger("auditor.api").error(f"On-the-fly PDF Generation Failed: {e}")
+                
+    if not matches:
+        # Fallback 2: Look for agent-only PDF
+        agent_pattern = os.path.join(reports_out, f"agent_findings_{short_id}_*.pdf")
+        matches = glob.glob(agent_pattern)
+        
+    if not matches:
+        # Fallback 3: check if the session exists and try to find by target URL netloc
         async with AsyncSession(engine) as db_session:
             repository = SqlAlchemyAuditRepository(db_session)
             try:
                 session = await repository.get_session(UUID(session_id))
                 if session:
                     domain = urlparse(session.target_url).netloc.replace("www.", "")
-                    domain_pattern = os.path.join(reports_out, f"{domain}_*.pdf")
-                    matches = glob.glob(domain_pattern)
-                    
-                    # Fallback 2: If still no PDF but we have the session, trigger REGENERATION
-                    if not matches:
-                        import logging
-                        logger = logging.getLogger("auditor.api")
-                        logger.info(f"PDF MISSING for session {session_id}. Triggering on-the-fly generation...")
-                        
-                        # Use the reporter to generate JSON then PDF
-                        from auditor.application.reporter import AuditReporter # type: ignore
-                        reporter = AuditReporter(db_session)
-                        # generate_summary_report creates JSON and HTML for target session
-                        report_paths = await reporter.generate_summary_report(session_id=session_id)
-                        
-                        if report_paths.get("json"):
-                            json_path = report_paths["json"]
-                            out_pdf = json_path.replace(".json", ".pdf")
-                            # Run PDF generation
-                            await asyncio.to_thread(convert_json_to_pdf, json_path, out_pdf)
-                            matches = [out_pdf]
+                    domain_pattern = os.path.join(reports_out, f"audit_report_*{domain}*.pdf")
+                    agent_domain_pattern = os.path.join(reports_out, f"{domain}_*.pdf")
+                    matches = glob.glob(domain_pattern) + glob.glob(agent_domain_pattern)
             except Exception as e:
-                import logging
-                logging.getLogger("auditor.api").error(f"On-the-fly PDF Generation Failed: {e}")
+                pass
 
     if not matches:
         raise HTTPException(status_code=404, detail="Remediation PDF not found and could not be regenerated.")
@@ -489,7 +434,6 @@ async def download_report(session_id: str, background_tasks: BackgroundTasks):
 @router.post("/reports/{session_id}/generate")
 async def generate_report_manually(session_id: str):
     """Explicitly trigger PDF report regeneration for a session."""
-    await init_db()
     async with AsyncSession(engine) as db_session:
         from auditor.application.reporter import AuditReporter # type: ignore
         reporter = AuditReporter(db_session)

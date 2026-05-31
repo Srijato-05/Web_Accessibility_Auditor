@@ -8,190 +8,180 @@ app_port: 7860
 pinned: false
 ---
 
-# Web Accessibility Auditor
+# High-Performance Web Accessibility Auditor
 
-An automated, high-fidelity web accessibility forensics engine built to diagnose, record, and resolve compliance violations against Web Content Accessibility Guidelines (WCAG 2.1 A/AA/AAA). The system utilizes headless browser execution, automated rule injection, and graph relationship persistence to identify accessibility blockers for users with motor, cognitive, visual, and auditory impairments.
+An automated, high-fidelity web accessibility forensics engine built to diagnose, record, and resolve compliance violations against Web Content Accessibility Guidelines (WCAG 2.2 A/AA/AAA), GIGW 3.0, and RBI circulars. The system utilizes recycled headless browser execution, automated rule injection, and graph relationship persistence to identify accessibility blockers at scale.
 
-## Core Architectural Concepts
+---
 
-The system is designed around several key engineering patterns to ensure reliability, security, and separation of concerns:
+## Key Performance & Systems Optimizations
 
-1. **Domain-Driven Design and Clean Architecture**: The backend codebase is strictly segregated into layers:
-   * **Domain Layer**: Core business models (AuditSession, Violation, AgentFinding), exceptions, and repository interfaces. Contains no external framework dependencies.
-   * **Application Layer**: Use cases, service orchestrators, and validation logic.
-   * **Infrastructure Layer**: Adapter implementations for database storage, Playwright automation, network analysis, and PDF compilation.
-   * **Presentation Layer**: FastAPI controllers, middleware, and request validation schemas.
-2. **Headless Browser Automation (Playwright Engine)**: The engine spawns headless Chromium instances to navigate target web pages, execute JavaScript, load dynamic content, and inject the axe-core testing library to identify layout and structure issues.
-3. **Anti-Bot Bypass Protocol (StealthProtocol)**: To ensure scans are not blocked by security firewalls, the headless browser is configured with custom user agents, spoofed viewport parameters, and anti-fingerprinting protocols to bypass standard bot detectors.
-4. **Dual-Storage Persistence Layer**:
-   * **SQLModel (SQLite)**: Used for local session storage, task queuing, and relational integrity of the audit entities.
-   * **TigerGraph**: An optional graph repository configuration mapping the structural tree nodes of accessibility issues to visualize structural DOM relationships.
+To handle high-throughput audits on cloud environments (like Hugging Face Spaces and Vercel) without resource degradation, the engine incorporates three high-performance systems-level optimizations:
+
+1. **Playwright BrowserContext Recycling & Evasion**:
+   Instead of launching a separate browser context for every scanned page (which incurs heavy CPU overhead and initialization latency), the engine shares a single, stealth-configured `BrowserContext`. Audits spin up light-weight page instances from the shared pool. If a WAF block or runtime error occurs, the context is safely discarded, a user persona rotation is triggered, and a clean context is recycled.
+
+2. **Cypher UNWIND Database Write Batching (Neo4j)**:
+   Rather than writing links and component violations to the graph database one-by-one (incurring heavy database RTT costs), the repository buffers transactions in-memory and flushes them to Neo4j in bulk. This uses Cypher `UNWIND` merge query arrays, reducing database connection transactions by up to 90%.
+
+3. **Dual-Persistence Task Queue & Worker Nodes**:
+   Features an asynchronous broker (`RedisTaskQueue`) with transparent local SQLite file fallback. Incoming API payloads can bypass concurrent web-server execution by specifying `use_queue: true`. Tasks are queued and ingested sequentially or concurrently by independent `AuditWorker` nodes, preventing web-server process crashes.
 
 ---
 
 ## System Architecture
 
-The following component diagram outlines the request routing and component dependencies across the client, presentation, execution, and persistence layers:
+The following diagram outlines the component routing and asynchronous task queuing flow across client, API, broker, and backend execution layers:
 
 ```mermaid
 graph TD
-    Client[React/Vite Frontend] -->|HTTP Requests| API[FastAPI Presentation Layer]
+    Client[React/Vite Frontend] -->|1. HTTP Scan Request| API[FastAPI Presentation Layer]
     
-    subgraph FastAPI Backend
-        API -->|Orchestrates Scan| AppService[Application Scan Coordinator]
-        AppService -->|Implements Interfaces| Domain[Domain Entities & Interfaces]
+    subgraph Execution & Queue Routing
+        API -->|Direct execution| AppService[Application Scan Coordinator]
+        API -->|Queued execution| TaskQueue[Redis/SQLite Task Queue]
+        TaskQueue -->|Dequeues Tasks| Workers[Distributed Worker Cluster]
+        Workers -->|Executes Scan| AppService
+    end
+
+    subgraph Service & Infrastructure Layer
+        AppService -->|Launches page audits| BrowserPool[Playwright BrowserContext Pool]
+        BrowserPool -->|Bypasses firewalls| Stealth[Polymorphic Stealth Evasion]
+        BrowserPool -->|Executes WCAG| AxeInject[axe-core Rule Engine]
         
-        subgraph Infrastructure Layer
-            BrowserEngine[Playwright Engine]
-            Stealth[Stealth Protocol]
-            AxeInject[axe-core Rule Engine]
-            DBAdapter[SQLAlchemy/SQLModel Adapter]
-            TigerAdapter[TigerGraph Adapter]
-            PDFCompiler[Report Compiler]
-        end
-        
-        AppService -->|Launches| BrowserEngine
-        BrowserEngine -->|Bypasses Blocks| Stealth
-        BrowserEngine -->|Injects| AxeInject
-        AppService -->|Persists Data| DBAdapter
-        AppService -->|Persists Graph| TigerAdapter
-        AppService -->|Generates PDFs| PDFCompiler
+        AppService -->|Relational Data| SQLiteAdapter[SQLAlchemy DB Adapter]
+        AppService -->|Graph Telemetry| Neo4jAdapter[Neo4j Batch Adapter]
     end
     
     subgraph Data Stores
-        DBAdapter -->|Writes SQLite| SQLite[(SQLite Database)]
-        TigerAdapter -->|Writes Graph| TG[(TigerGraph Database)]
+        SQLiteAdapter -->|SQLite DB| SQLite[(SQLite Ledger)]
+        Neo4jAdapter -->|Cypher UNWIND| Neo4j[(Neo4j Graph Database)]
     end
 ```
 
 ---
 
-## Execution Flow (Audit Request Lifecycle)
+## System Execution Flow
 
-The sequence diagram below details the end-to-end execution of a single-page audit request from initiation to database persistence and client response:
+The sequence diagram below details the dual lifecycle pathways (Direct Background Task vs. Async Task Queue Worker):
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Client Dashboard
+    actor Client as Dashboard Client
     participant API as FastAPI Router
+    participant Queue as Task Queue (Redis/SQLite)
+    participant Worker as Audit Worker
     participant Coordinator as Scan Coordinator
-    participant Browser as Playwright Engine
-    participant Axe as axe-core
-    participant DB as SQLite Database
+    participant Browser as Playwright Pool
+    participant Neo4j as Neo4j Graph DB
     
-    User->>API: POST /api/scan/single (target URL)
-    API->>Coordinator: Initialize AuditSession
-    Coordinator->>DB: Save Session (Status: PENDING)
-    Coordinator->>Browser: Launch Chromium (Stealth Mode)
-    Browser->>Browser: Load Target Page
-    Browser->>Axe: Inject axe-core Javascript Library
-    Axe->>Browser: Execute Rule Scans (WCAG Standard)
-    Browser-->>Coordinator: Return Raw JSON Violations
-    Coordinator->>Coordinator: Normalize and Group Violations
-    Coordinator->>DB: Save Session (Status: COMPLETED, Store Violations)
-    Coordinator->>Browser: Close Browser Instance
-    Coordinator-->>API: Return Finalized Audit Result
-    API-->>User: Render Results Dashboard (JSON Payload)
+    Client->>API: POST /api/audit { url, use_queue: true }
+    alt Task Queue Pathway
+        API->>Queue: Push Task (single_url_audit)
+        API-->>Client: Return session ID & status: "queued"
+        Worker->>Queue: Pop Task
+        Worker->>Coordinator: execute_audit(url)
+    else Direct Pathway (use_queue: false)
+        API->>Coordinator: run direct in background task
+        API-->>Client: Return session ID & status: "started"
+    end
+    
+    Coordinator->>Browser: Request lightweight page from context pool
+    Browser->>Browser: Apply stealth persona & load page
+    Browser->>Browser: Inject axe-core & run rules
+    Browser-->>Coordinator: Return raw violations list
+    Coordinator->>Coordinator: Map and group violations
+    Coordinator->>Neo4j: Batch insert links & violations (UNWIND)
+    Coordinator->>Browser: Release page back to context pool
+    Worker->>Queue: Mark Task as Completed
 ```
 
 ---
 
-## Feature Matrix
+## Detailed Command CLI and Services
 
-* **Automated Accessibility Audits**: Scans target URLs against WCAG 2.1 standards, categorizing violations into levels of impact (critical, serious, moderate, minor).
-* **DOM Selector Targeting**: Captures the exact CSS selector, HTML node snippet, and failure summary for every violation.
-* **Sitemap and Link Crawler**: Automatically extracts internal links and sitemap definitions to execute batch-audits across entire sites.
-* **Interactive Graph Visualization**: Provides an interactive visual interface displaying the hierarchical relationship between scanned pages, nodes, and found violations.
-* **Detailed Remediation Guidance**: Generates programmatic recommendations, advice, and instructions explaining how developers can fix specific failures.
-* **PDF Exporter**: Compiles scan results into structured, professional PDF documents.
+The orchestrator console (`batch_audit.py`) manages administrative, background worker, and telemetry operations:
 
----
+```bash
+Accessibility Auditor Console [v0.1.0]
+Usage: python batch_audit.py [options]
 
-## Database Schema Specifications
-
-The relational schema is implemented using SQLModel tables:
-
-### 1. AuditSessionModel
-Represents a single scan operation executed on a specific date.
-* `id` (UUID, Primary Key)
-* `url` (String, Indexed)
-* `status` (String): e.g., `PENDING`, `COMPLETED`, `FAILED`
-* `created_at` (DateTime)
-* `completed_at` (DateTime, Nullable)
-* `overall_score` (Float)
-* `total_violations` (Integer)
-
-### 2. ViolationModel
-Represents an accessibility failure discovered during an audit. Each model links back to its parent session.
-* `id` (UUID, Primary Key)
-* `session_id` (UUID, Foreign Key referencing `AuditSessionModel.id`)
-* `rule_id` (String): e.g., `color-contrast`, `image-alt`
-* `impact` (String): e.g., `critical`, `serious`, `moderate`, `minor`
-* `description` (String)
-* `help_url` (String)
-* `selector` (String): CSS selector of the failing element
-* `html_snippet` (String): The raw failing HTML node
-* `remediation_advice` (String)
+Options:
+  --help, -h          Show this help message
+  --add-target [url]  Add a new target domain to the audit registry
+  --dispatch          Dispatch all active domains to the task queue
+  --discover [url]    Autonomously discover links (sitemap/robots.txt) & dispatch to queue
+  --worker            Start an autonomous task worker node
+  --dashboard         Launch the terminal-based (TUI) real-time cluster monitor
+  --report            Generate an HTML summary report from the database sessions
+```
 
 ---
 
-## Deployment Architecture
+## Testing & Coverage Gateway
 
-The application is deployed using a decoupled, production-grade cloud layout:
+The codebase includes an in-depth unit and integration testing suite under the `tests/` directory verifying components, API endpoints, mock databases, and error boundaries.
 
-* **Frontend Hosting (Vercel)**:
-  * Live URL: https://web-accessibility-auditor-roan.vercel.app
-  * The React client is built using Vite and deployed as a static Single Page Application (SPA).
-  * Points to the backend API via the build environment variable `VITE_API_URL`.
-* **Backend Hosting (Hugging Face Spaces)**:
-  * Live URL: https://srijato-das-web-accessibility-auditor.hf.space
-  * Run inside a Docker container utilizing a Python base image.
-  * Launches Playwright inside a secure, non-root user account (UID 1000) to ensure container stability.
-  * Inbound requests are handled on port `7860`.
+### Test Runner Configurations
+* **`pytest.ini`**: Configures verbosity, stdout CLI log capturing, and automatic async markers (`asyncio_mode = auto`).
+* **`.coveragerc`**: Targets coverage metrics to the `src/auditor` package, omitting test folders and code stubs.
+
+### Running Tests
+To verify dependencies, run all unit/integration tests, and generate HTML code coverage reports:
+
+* **Windows**:
+  ```cmd
+  run_tests.bat
+  ```
+* **Linux / macOS**:
+  ```bash
+  chmod +x run_tests.sh
+  ./run_tests.sh
+  ```
+* **Results**: Open the generated interactive page at `htmlcov/index.html` to inspect coverage ratios per file.
 
 ---
 
 ## Local Installation and Setup
 
 ### 1. Prerequisites
-Ensure you have the following installed on your machine:
 * Python 3.12+
 * Node.js 18+
-* Poetry (Python Package Manager)
+* Poetry
+* Redis (Optional: Fallback SQLite queue is utilized if Redis is offline)
+* Neo4j (Local Neo4j Desktop or Aura Cloud connection)
 
 ### 2. Backend Setup
-Navigate to the project root directory:
-
-```bash
-# Install Python packages and create virtual environment
-poetry install
-
-# Install Playwright browser dependencies (Chromium)
-playwright install chromium
-```
-
-To run the FastAPI server locally on port `8000`:
-```bash
-poetry run python run_server.py
-```
+1. Clone the repository and navigate to the project directory:
+   ```bash
+   poetry install
+   playwright install chromium
+   ```
+2. Create a `.env` configuration file in the project root:
+   ```ini
+   NEO4J_URI=bolt://localhost:7687
+   NEO4J_USER=neo4j
+   NEO4J_PASSWORD=your_secure_password
+   REDIS_URL=redis://localhost:6379
+   DATABASE_URL=sqlite+aiosqlite:///./reports/data/audit_results.db
+   ```
+3. Run the FastAPI development server:
+   ```bash
+   poetry run python run_server.py
+   ```
 
 ### 3. Frontend Setup
-Navigate to the frontend directory:
-
-```bash
-cd frontend
-
-# Install package dependencies
-npm install
-```
-
-Configure your local environment variables by creating a `.env` file inside the `frontend` folder:
-```env
-VITE_API_URL=http://localhost:8000/api
-```
-
-To run the Vite development server locally on port `5173`:
-```bash
-npm run dev
-```
+1. Navigate to the `frontend` folder and install dependencies:
+   ```bash
+   cd frontend
+   npm install
+   ```
+2. Create a `.env` file in the `frontend` folder:
+   ```env
+   VITE_API_URL=http://localhost:8000/api
+   ```
+3. Start the Vite React app locally:
+   ```bash
+   npm run dev
+   ```

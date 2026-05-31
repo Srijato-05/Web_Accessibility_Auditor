@@ -44,8 +44,18 @@ class AuditSession:
     agent_summary: Dict[str, Any] = field(default_factory=dict)
     remediation_plan: str = ""
 
+    @property
+    def status_value(self) -> str:
+        if hasattr(self.status, "value"):
+            val = self.status.value
+        else:
+            val = str(self.status)
+        if "." in val:
+            val = val.split(".")[-1]
+        return val.lower()
+
     def start(self):
-        if self.status != SessionStatus.CREATED:
+        if self.status_value != "created":
             raise ValueError(f"Cannot start session in status: {self.status}")
         now = datetime.now()
         self.status = SessionStatus.IN_PROGRESS
@@ -53,7 +63,7 @@ class AuditSession:
         self.updated_at = now
 
     def complete(self):
-        if self.status != SessionStatus.IN_PROGRESS:
+        if self.status_value != "in_progress":
             raise ValueError(f"Cannot complete session in status: {self.status}")
         now = datetime.now()
         self.status = SessionStatus.COMPLETED
@@ -64,3 +74,4 @@ class AuditSession:
         self.status = SessionStatus.FAILED
         self.error_message = error
         self.updated_at = datetime.now()
+

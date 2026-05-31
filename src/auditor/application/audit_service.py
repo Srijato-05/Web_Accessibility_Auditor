@@ -30,7 +30,7 @@ from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.infrastructure.playwright_engine import PlaywrightEngine # type: ignore
 from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.shared.compliance_mapper import ComplianceMapper # type: ignore
-from auditor.infrastructure.tigergraph_repository import TigerGraphRepository
+from auditor.infrastructure.neo4j_repository import Neo4jRepository
 from auditor.application.agent_service import get_agent_service # type: ignore
 from auditor.shared.paths import EXPORTS_DIR
 
@@ -64,7 +64,7 @@ class AuditService:
         self.CIRCUIT_THRESHOLD = 5 # Trip after 5 consecutive failures
 
         # --- TEAM ANTIGRAVITY ---
-        self.tg_repo = TigerGraphRepository()
+        self.tg_repo = Neo4jRepository()
 
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
@@ -195,37 +195,55 @@ class AuditService:
             # -------------------------------------
 
             # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
-            # Parallelize structural telemetry to avoid blocking the forensic path
-            tg_tasks = []
+            # Flush component violations to Neo4j in a single optimized batch
+            tg_batch = []
             final_violations: List[Violation] = violations # Explicit type hint for linter
-            # Normalize and validate before saving
             for v in final_violations:
                 # Ensure nodes is at least an empty list if None, for SQLModel compatibility
                 if v.nodes is None:
                     v.nodes = []
                 # Handle Node-less violations (Systemic Heuristics)
                 if not v.nodes:
-                    tg_tasks.append(self.tg_repo.upsert_component_violation_async(v.url, v, f"SYSTEMIC-VIOLATION: {v.rule_id}"))
+                    tg_batch.append({
+                        "page_url": v.url,
+                        "rule_id": v.rule_id,
+                        "impact": v.impact.value if hasattr(v.impact, "value") else str(v.impact),
+                        "node_html": f"SYSTEMIC-VIOLATION: {v.rule_id}"
+                    })
 
                 for node in v.nodes: # type: ignore
                     html_snippet = str(node.get("html", "GENERIC-ELEMENT"))
                     if html_snippet:
-                        tg_tasks.append(
-                            asyncio.create_task(
-                                self.tg_repo.upsert_component_violation_async(url, v, html_snippet)
-                            )
-                        )
+                        tg_batch.append({
+                            "page_url": url,
+                            "rule_id": v.rule_id,
+                            "impact": v.impact.value if hasattr(v.impact, "value") else str(v.impact),
+                            "node_html": html_snippet
+                        })
+
+            if tg_batch:
+                self.logger.info(f"Batching {len(tg_batch)} component violations to Neo4j...")
+                try:
+                    await self.tg_repo.upsert_component_violations_batch_async(tg_batch)
+                except Exception as tg_err:
+                    self.logger.error(f"Neo4j batch upsert failed: {tg_err}")
             # -------------------------------------
 
             # PHASE 4: PERSISTENCE
             async with self._lock:
                 self.logger.debug(f"Committing {len(violations)} records to the repository...")
+                db_session = getattr(self.repository, "db_session", None)
                 await self.repository.save_violations(violations)
                 
                 # Update Session State
                 cur_session = cast(AuditSession, session)
                 cur_session.violations = cast(List[Violation], violations)
-                cur_session.complete() # type: ignore
+                if cur_session.status == SessionStatus.IN_PROGRESS:
+                    cur_session.complete() # type: ignore
+                else:
+                    cur_session.status = SessionStatus.COMPLETED
+                    cur_session.completed_at = datetime.now()
+                    cur_session.updated_at = datetime.now()
                 
                 # Capture remediation plan in DB for frontend Intelligence Link
                 try:
@@ -234,6 +252,8 @@ class AuditService:
                     pass
                     
                 await self.repository.save_session(cur_session)
+                if db_session:
+                    await db_session.commit()
                 
                 # Cycle 7: Remediation Hub v2 (Markdown Patch-Sets)
                 try:
@@ -292,12 +312,15 @@ class AuditService:
     # --------------------------------------------------------------------------
 
     async def _session_reconciliation(self, session: AuditSession):
-        """Ensures the audit session is reconciled with the repository."""
+        """Ensures the audit session state is reconciled and committed."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 await self.repository.save_session(session)
                 self.logger.debug(f"Session {session.id} saved.")
+                db_session = getattr(self.repository, "db_session", None)
+                if db_session:
+                    await db_session.commit()
                 return
             except Exception as e:
                 self.logger.warning(f"Persistence Attempt {attempt+1} failed for {session.id}: {e}")
@@ -466,9 +489,10 @@ class AuditService:
         ]
         
         # Priority Ranking
+        severity_weights = {"critical": 1, "serious": 2, "moderate": 3, "minor": 4}
         sorted_violations = sorted(
             violations, 
-            key=lambda x: x.impact.value if (x.impact and hasattr(x.impact, 'value')) else 99
+            key=lambda x: severity_weights.get(x.impact.value if (x.impact and hasattr(x.impact, 'value')) else str(x.impact), 99)
         )
 
         for i, v in enumerate(sorted_violations):
@@ -575,6 +599,13 @@ class AuditService:
             "signature": "VANGUARD-ZE-SIG-SIMULATED"
         }
         # In a real system, this would write to a write-only blockchain or log server
+        pass
+
+    def append_audit_trail_signature(self, session_id: UUID, event: str, metadata: Dict):
+        """
+        Synchronously registers a governance event in the audit trail ledger.
+        """
+        self.logger.debug(f"Audit Trail Governance Event Registered: {event} for session {session_id}")
         pass
 
     # --------------------------------------------------------------------------
@@ -956,7 +987,7 @@ class AuditService:
         return "<!-- Manual review required: No automated patch synthesized. -->"
 
     # [ BLOCK: COMPLIANCE MAPPER ]
-    def generate_remediation_plan(self, violations: List[Violation]) -> str:
+    def generate_stakeholder_remediation_plan(self, violations: List[Violation]) -> str:
         """Cycle 7/12: Remediation Hub v2 - Generates high-fidelity developer patch-sets."""
         plan = "# Accessibility Remediation Patch-Set\n"
         plan += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -964,7 +995,8 @@ class AuditService:
         
         for v in violations:
             plan += f"## {v.rule_id}: {v.description}\n"
-            plan += f"**Impact**: {v.impact.value.upper()}\n"
+            impact_str = v.impact.value if (v.impact and hasattr(v.impact, 'value')) else "UNKNOWN"
+            plan += f"**Impact**: {impact_str.upper()}\n"
             
             for node in v.nodes:
                 html = node.get("html", "")

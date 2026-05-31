@@ -23,7 +23,7 @@ from auditor.domain.crawler import LinkDiscoveryService # type: ignore
 from auditor.application.audit_service import AuditService # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.domain.exceptions import AuditFailedError # type: ignore
-from auditor.infrastructure.tigergraph_repository import TigerGraphRepository # type: ignore
+from auditor.infrastructure.neo4j_repository import Neo4jRepository # type: ignore
 from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
 from auditor.domain.violation import Violation # type: ignore
 from auditor.application.reporter import AuditReporter # type: ignore
@@ -62,7 +62,9 @@ class CrawlService:
         self.logger = auditor_logger.getChild("CrawlController")
 
         # --- TEAM ANTIGRAVITY ---
-        self.tg_repo = TigerGraphRepository()
+        self.tg_repo = Neo4jRepository()
+        self._links_batch = []
+        self._batch_lock = asyncio.Lock()
 
     # --------------------------------------------------------------------------
     # CORE RECURSIVE DISCOVERY PROCESS
@@ -111,6 +113,11 @@ class CrawlService:
         # Await process completion
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
+        # Flush all page links to Neo4j in a single optimized batch
+        if self._links_batch:
+            self.logger.info(f"Batching {len(self._links_batch)} discovered page links to Neo4j...")
+            await self.tg_repo.upsert_page_links_batch_async(self._links_batch)
+        
         # AGGREGATION PHASE
         all_violations = []
         for res in results:
@@ -122,17 +129,42 @@ class CrawlService:
         self.logger.info(f"Aggregated {len(all_violations)} violations across {self.success_count} pages.")
         
         # Master Reporting
-        if all_violations:
-            
-            # Create a virtual session for the whole crawl
-            master_session = AuditSession(target_url=start_url)
-            master_session.status = SessionStatus.COMPLETED
-            master_session.violations = all_violations
-            
-            # Use the existing repository from the audit service
-            reporter = AuditReporter(self.audit_service.repository) 
-            reporter.generate_summary_report(master_session, all_violations)
-            self.logger.info(f"MASTER MISSION REPORT GENERATED for {start_url}")
+        master_session = AuditSession(target_url=start_url)
+        master_session.status = SessionStatus.COMPLETED
+        master_session.violations = all_violations
+        
+        # Link copies of violations to the master session id
+        master_violations = []
+        for v in all_violations:
+            v_copy = Violation(
+                rule_id=v.rule_id,
+                impact=v.impact,
+                description=v.description,
+                help_url=v.help_url,
+                selector=v.selector,
+                nodes=v.nodes,
+                tags=v.tags,
+                session_id=master_session.id,
+                agent=v.agent,
+                compliance_level=v.compliance_level,
+                category=v.category,
+                severity_matrix=v.severity_matrix,
+                url=v.url
+            )
+            master_violations.append(v_copy)
+        
+        # Persist master session and violations in SQLite
+        db_session = getattr(self.audit_service.repository, "db_session", None)
+        await self.audit_service.repository.save_session(master_session)
+        if master_violations:
+            await self.audit_service.repository.save_violations(master_violations)
+        if db_session:
+            await db_session.commit()
+        
+        # Use the database session from the repository and generate the reports
+        reporter = AuditReporter(self.audit_service.repository.db_session) 
+        await reporter.generate_summary_report(session_id=master_session.id)
+        self.logger.info(f"MASTER MISSION REPORT GENERATED for {start_url}")
         
         # AUDIT SUMMARY
         duration = datetime.now() - start_time
@@ -142,6 +174,7 @@ class CrawlService:
         self.logger.info(f"Successful Audits: {self.success_count}")
         self.logger.info(f"Audit Failures: {self.failed_count}")
         self.logger.info(f"Total Audit Duration: {duration}")
+        return master_session
 
     async def _process_audit_session(self, url: str, depth: int, queue: asyncio.PriorityQueue):
         """Coordinates a single-page audit and recursive link extraction."""
@@ -166,11 +199,12 @@ class CrawlService:
                         normalized = self._normalize_url(link)
 
                         # --- TEAM ANTIGRAVITY GRAPH MAPPER ---
-                        await self.tg_repo.upsert_page_link_async(
-                            source_url=url,
-                            target_url=normalized,
-                            domain_url=domain_root,
-                        )
+                        async with self._batch_lock:
+                            self._links_batch.append({
+                                "source_url": url,
+                                "target_url": normalized,
+                                "domain_url": domain_root
+                            })
                         # -------------------------------------
 
                         if normalized not in self.visited_urls and self._is_internal(start_url=url, target_url=normalized):
@@ -185,7 +219,7 @@ class CrawlService:
                 self.failed_count += 1
                 return None
             except Exception as e:
-                self.logger.error(f"Critical anomaly during scan of {url}: {e}")
+                self.logger.exception(f"Critical anomaly during scan of {url}")
                 self.failed_count += 1
                 return None
             

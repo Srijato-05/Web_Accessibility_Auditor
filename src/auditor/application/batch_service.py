@@ -152,24 +152,7 @@ class BatchAuditManager:
                 
             await asyncio.sleep(2)
 
-    async def _monitor_system_health(self):
-        """Background loop for sub-second hardware telemetry and auto-scaling."""
-        self.logger.info("Hardware Auto-Scaler ONLINE.")
-        while not self._stop_monitor.is_set():
-            cpu = psutil.cpu_percent(interval=1)
-            ram = psutil.virtual_memory().percent
-            
-            # Exponential backoff logic for throttle ratio
-            if cpu > 85 or ram > 90:
-                self._dynamic_throttle_ratio = 0.2
-                self.logger.warning(f"SYSTEM CRITICAL LOAD [{cpu}% CPU]. Throttling to 20% capacity.")
-            elif cpu > 70 or ram > 80:
-                self._dynamic_throttle_ratio = 0.5
-                self.logger.info(f"System Load Elevated [{cpu}% CPU]. Throttling to 50% capacity.")
-            else:
-                self._dynamic_throttle_ratio = 1.0
-                
-            await asyncio.sleep(2)
+
 
     async def _process_domain_audit(self, domain: AuditTarget) -> bool:
         """Coordinates the end-to-end audit process with dynamic throttling."""

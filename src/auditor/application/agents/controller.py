@@ -10,6 +10,7 @@ Output is validated before being returned.
 
 import os
 import sys
+import re
 
 # IDE PATH RECONCILIATION: Ensure internal module resolution
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -107,7 +108,6 @@ class AgentController:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         if target_url:
-            import re
             cleaned = re.sub(r"^https?://(www\.)?", "", target_url)
             cleaned = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", cleaned).strip("_")
             base_name = f"{cleaned}_{timestamp}"

@@ -41,7 +41,7 @@ class SqlAlchemyTargetRepository(ITargetRepository):
                 model = TargetModel(
                     id=str(domain.id),
                     url=domain.url,
-                    status=domain.status,
+                    status=domain.status.value if hasattr(domain.status, "value") else str(domain.status),
                     created_at=domain.created_at,
                     last_audit_at=domain.last_audit_at,
                     frequency_hours=domain.frequency_hours
@@ -57,7 +57,7 @@ class SqlAlchemyTargetRepository(ITargetRepository):
         """Aggregates the complete set of active targets."""
         try:
             self.logger.debug("Executing Domain Extraction Query...")
-            stmt = select(TargetModel).where(TargetModel.status != DomainStatus.PAUSED)
+            stmt = select(TargetModel).where(TargetModel.status != DomainStatus.PAUSED.value)
             result = await self.db_session.exec(stmt)
             model_instances = result.all()
             
@@ -67,7 +67,7 @@ class SqlAlchemyTargetRepository(ITargetRepository):
                 AuditTarget(
                     id=m.id,
                     url=m.url,
-                    status=m.status,
+                    status=DomainStatus(m.status) if isinstance(m.status, str) else m.status,
                     created_at=m.created_at,
                     last_audit_at=m.last_audit_at,
                     frequency_hours=m.frequency_hours
@@ -95,7 +95,7 @@ class SqlAlchemyTargetRepository(ITargetRepository):
             return AuditTarget(
                 id=model_inst.id,
                 url=model_inst.url,
-                status=model_inst.status,
+                status=DomainStatus(model_inst.status) if isinstance(model_inst.status, str) else model_inst.status,
                 created_at=model_inst.created_at,
                 last_audit_at=model_inst.last_audit_at,
                 frequency_hours=model_inst.frequency_hours

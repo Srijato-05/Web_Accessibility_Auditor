@@ -424,6 +424,11 @@ class PlaywrightEngine(IBrowserEngine):
                     _self.logger.warning(f"PERSONA ROTATION: Attempt {current_attempt} using Mobile Persona...") # type: ignore
                     mobile_profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Mobile" in p["name"]), _self.profile) # type: ignore
                     _self.profile = mobile_profile # type: ignore
+                    # Discard recycled context on persona rotation
+                    if _self.context:
+                        try: await _self.context.close()
+                        except: pass
+                        _self.context = None
                 
                 # Attempt 3: Switch to Headful (with Headless fallback)
                 if current_attempt == 3:
@@ -440,26 +445,37 @@ class PlaywrightEngine(IBrowserEngine):
                     
                     br = _self.browser # type: ignore
                     _self.profile = next((p for p in StealthProfileGenerator.get_all_profiles() if "Windows-Chrome" in p["name"]), _self.profile) # type: ignore
+                    # Discard recycled context on persona rotation
+                    if _self.context:
+                        try: await _self.context.close()
+                        except: pass
+                        _self.context = None
 
-                local_context = await br.new_context( # type: ignore
-                    viewport=_self.profile['viewport'], # type: ignore
-                    user_agent=_self.profile['userAgent'], # type: ignore
-                    java_script_enabled=True,
-                    bypass_csp=False, # Disable CSP bypass (sometimes detected)
-                    extra_http_headers={
-                        "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"123\", \"Chromium\";v=\"123\"",
-                        "sec-ch-ua-full-version-list": "\"Not A(Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"123.0.6312.52\", \"Chromium\";v=\"123.0.6312.52\"",
-                        "sec-ch-ua-mobile": "?0",
-                        "sec-ch-ua-platform": "\"Windows\"",
-                        "sec-ch-ua-platform-version": "\"10.0.0\"",
-                        "referer": "https://www.google.com/"
-                    }
-                )
-                
-                # Re-inject stealth for this context
-                stealth_js = StealthProtocol.get_injection_script(_self.profile) # type: ignore
-                await local_context.add_init_script(stealth_js)
-                await _self._inject_zenith_stealth(local_context, _self.profile) # type: ignore
+                # Recycle or initialize context
+                if current_attempt == 1 and _self.context:
+                    local_context = _self.context
+                else:
+                    local_context = await br.new_context( # type: ignore
+                        viewport=_self.profile['viewport'], # type: ignore
+                        user_agent=_self.profile['userAgent'], # type: ignore
+                        java_script_enabled=True,
+                        bypass_csp=False, # Disable CSP bypass (sometimes detected)
+                        record_har_path=f"reports/forensics/har/session_{_self.session_id}.har" if _self.session_id else None,
+                        extra_http_headers={
+                            "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"123\", \"Chromium\";v=\"123\"",
+                            "sec-ch-ua-full-version-list": "\"Not A(Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"123.0.6312.52\", \"Chromium\";v=\"123.0.6312.52\"",
+                            "sec-ch-ua-mobile": "?0",
+                            "sec-ch-ua-platform": "\"Windows\"",
+                            "sec-ch-ua-platform-version": "\"10.0.0\"",
+                            "referer": "https://www.google.com/"
+                        }
+                    )
+                    # Re-inject stealth for this context
+                    stealth_js = StealthProtocol.get_injection_script(_self.profile) # type: ignore
+                    await local_context.add_init_script(stealth_js)
+                    await _self._inject_zenith_stealth(local_context, _self.profile) # type: ignore
+                    if current_attempt == 1:
+                        _self.context = local_context
                 
                 page = await local_context.new_page()
                 
@@ -520,7 +536,9 @@ class PlaywrightEngine(IBrowserEngine):
                     from axe_playwright_python.async_playwright import Axe
                     results = await Axe().run(page) 
                     
-                    if hasattr(results, 'violations'):
+                    if hasattr(results, 'response') and isinstance(results.response, dict):
+                        axe_violations = results.response.get("violations", [])
+                    elif hasattr(results, 'violations'):
                         axe_violations = cast(Any, results).violations
                     elif isinstance(results, dict):
                         axe_violations = results.get("violations", [])
@@ -555,9 +573,15 @@ class PlaywrightEngine(IBrowserEngine):
                 duration = time.time() - start_time
                 _self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations_raw)} | T+{duration:.2f}s") # type: ignore
                 
+                _self.context = local_context
                 return _self._map_results(all_violations_raw, url) # type: ignore
                 
             except AuditFailedError as e:
+                # Discard context on failures
+                if _self.context:
+                    try: await _self.context.close()
+                    except: pass
+                    _self.context = None
                 if "WAF Block" in str(e) and current_attempt < MAX_PERSONAS:
                     current_attempt += 1
                     if page: await page.close()
@@ -566,9 +590,17 @@ class PlaywrightEngine(IBrowserEngine):
                 raise
             except (PlaywrightError, asyncio.TimeoutError) as pe:
                 _self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}") # type: ignore
+                if _self.context:
+                    try: await _self.context.close()
+                    except: pass
+                    _self.context = None
                 raise EngineError(f"Audit failed for {url}: {pe}")
             except Exception as e:
                 _self.logger.critical(f"FATAL Engine Anomaly at {url}: {e}", exc_info=True) # type: ignore
+                if _self.context:
+                    try: await _self.context.close()
+                    except: pass
+                    _self.context = None
                 raise EngineError(f"Audit failed for {url}: {e}")
             finally:
                 if page:
@@ -576,7 +608,7 @@ class PlaywrightEngine(IBrowserEngine):
                         if not page.is_closed():
                             await page.close()
                     except: pass
-                if local_context:
+                if local_context and local_context is not _self.context:
                     try:
                         await local_context.close()
                     except: pass

@@ -48,7 +48,7 @@ class AuditReporter:
             stmt = select(AuditSessionModel).where(AuditSessionModel.id == session_id)
         else:
             stmt = select(AuditSessionModel).where(
-                AuditSessionModel.status == SessionStatus.COMPLETED
+                AuditSessionModel.status == "completed"
             ).order_by(desc(AuditSessionModel.started_at)).limit(1)
 
         res = await self.session.exec(stmt)
@@ -85,13 +85,13 @@ class AuditReporter:
                     "compliance_level": getattr(v, "compliance_level", "N/A"),
                     "category": getattr(v, "category", "General"),
                     "severity_matrix": getattr(v, "severity_matrix", "Moderate"),
-                    "url": getattr(v, "url", "")
+                    "url": getattr(v, "url", ""),
+                    "nodes": getattr(v, "nodes", [])
                 } for v in violations
             ]
         }
 
         # 3b. Compute Forensic Matrix (Agents vs Principles)
-        # ... (matrix logic remains same, but I'll ensure I don't break it)
         matrix = {
             "axe": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
             "visual": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
@@ -103,12 +103,20 @@ class AuditReporter:
             if not isinstance(v_entry, dict):
                 continue
             agent = str(v_entry.get("agent", "axe")).lower()
-            category = str(v_entry.get("category", "General"))
+            category = str(v_entry.get("category", "General")).strip().lower()
+            
+            norm_category = "General"
+            if "perceivable" in category:
+                norm_category = "Perceivable"
+            elif "operable" in category:
+                norm_category = "Operable"
+            elif "understandable" in category:
+                norm_category = "Understandable"
+            elif "robust" in category:
+                norm_category = "Robust"
+                
             if agent in matrix:
-                if category in matrix[agent]:
-                    matrix[agent][category] += 1
-                else:
-                    matrix[agent]["General"] += 1
+                matrix[agent][norm_category] += 1
         
         report_data["matrix"] = matrix
         report_data["target_url"] = session_record.target_url # For PDF parity
@@ -122,18 +130,19 @@ class AuditReporter:
         pdf_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.pdf")
 
         # JSON Export
-        with open(json_path, "w") as f:
-            json.dump(report_data, f, indent=4)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(report_data, f, indent=4, ensure_ascii=False)
 
         # HTML Export (Premium Template)
         html_content = self._build_html_dashboard(report_data)
-        with open(html_path, "w") as f:
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
 
         # PDF Export (Same Design Principle)
         try:
             from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
-            convert_json_to_pdf(json_path, pdf_path)
+            import asyncio
+            await asyncio.to_thread(convert_json_to_pdf, json_path, pdf_path)
             self.logger.info(f"PDF Stakeholder Report Generated: {pdf_path}")
         except Exception as e:
             self.logger.error(f"PDF Generation Failed: {e}")
@@ -187,6 +196,21 @@ class AuditReporter:
         for v in data["violations"]:
             impact_raw = v.get("impact") or "minor"
             impact_class = f"impact-{impact_raw.lower()}"
+            
+            # Extract subcategory from tags
+            tags = v.get("tags", [])
+            subcategory = ""
+            for t in tags:
+                if isinstance(t, str) and t.startswith("cat."):
+                    subcategory = t[4:].replace("-", " ").title()
+                    break
+            
+            category = v.get("category", "General")
+            if category and subcategory:
+                cat_display = f"{category} - {subcategory}"
+            else:
+                cat_display = category or "General"
+                
             violations_html += f"""
             <div class="violation-card {impact_class}">
                 <div class="card-header">
@@ -195,7 +219,7 @@ class AuditReporter:
                     <span class="agent-badge">{(v.get('agent') or 'axe').upper()}</span>
                     <span class="rule-id">{v.get('rule_id')}</span>
                 </div>
-                <div class="category-tag">{v['category']}</div>
+                <div class="category-tag">{cat_display}</div>
                 <p class="description">{v['description']}</p>
                 <code class="selector">{v['selector']}</code>
                 <div class="footer">
@@ -216,7 +240,8 @@ class AuditReporter:
                 <div class="matrix-header">Understandable</div>
                 <div class="matrix-header">Robust</div>
         """
-        for agent, principles in data["matrix"].items():
+        for agent in ["axe", "visual", "motor", "cognitive", "neural"]:
+            principles = data["matrix"].get(agent, {})
             matrix_html += f'<div class="matrix-row-label">{agent.upper()}</div>'
             for principle in ["Perceivable", "Operable", "Understandable", "Robust"]:
                 count = principles.get(principle, 0)

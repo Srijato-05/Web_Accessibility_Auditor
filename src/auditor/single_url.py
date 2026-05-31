@@ -98,17 +98,26 @@ if __name__ == "__main__":
             reports_out = str(EXPORTS_DIR)
             
             # Match patterns
+            combined_pattern = os.path.join(reports_out, f"audit_report_{str(session_id)[:8]}_*.json")
             findings_pattern = os.path.join(reports_out, f"agent_findings_{str(session_id)[:8]}_*.json") # type: ignore
             domain = urlparse(url).netloc.replace("www.", "")
             findings_pattern_url = os.path.join(reports_out, f"{domain}_*.json")
             
-            matches = glob.glob(findings_pattern) + glob.glob(findings_pattern_url)
-            if matches:
-                latest_json = max(matches, key=os.path.getctime)
+            combined_matches = glob.glob(combined_pattern)
+            if combined_matches:
+                latest_json = max(combined_matches, key=os.path.getctime)
                 out_pdf = latest_json.replace(".json", ".pdf")
-                print(f"Post-Audit: Generating PDF Advice from {os.path.basename(latest_json)}...")
+                print(f"Post-Audit: Generating Combined PDF Report from {os.path.basename(latest_json)}...")
                 convert_json_to_pdf(latest_json, out_pdf)
-                print(f"PDF Remediation Advice Generated: {out_pdf}")
+                print(f"Combined PDF Report Generated: {out_pdf}")
+            else:
+                matches = glob.glob(findings_pattern) + glob.glob(findings_pattern_url)
+                if matches:
+                    latest_json = max(matches, key=os.path.getctime)
+                    out_pdf = latest_json.replace(".json", ".pdf")
+                    print(f"Post-Audit: Generating PDF Advice from {os.path.basename(latest_json)}...")
+                    convert_json_to_pdf(latest_json, out_pdf)
+                    print(f"PDF Remediation Advice Generated: {out_pdf}")
                 
     except KeyboardInterrupt:
         auditor_logger.warning("Auditor Console TERMINATED by User.")

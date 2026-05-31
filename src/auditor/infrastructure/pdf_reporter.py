@@ -36,8 +36,51 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 agent = f.get("agent", "unknown").lower()
                 by_agent[agent] = by_agent.get(agent, 0) + 1
 
-    # Matrix Support
+    # Matrix Support (Normalized & Fallback Calculation)
     matrix = data.get("matrix", {})
+    
+    # Ensure all 5 primary agents are represented in the matrix
+    agents_list = ["axe", "visual", "motor", "cognitive", "neural"]
+    full_matrix = {}
+    for a in agents_list:
+        full_matrix[a] = {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0}
+        
+    if matrix:
+        for a, categories in matrix.items():
+            a_lower = str(a).lower()
+            if a_lower in full_matrix:
+                for cat, val in categories.items():
+                    cat_lower = str(cat).lower()
+                    norm_cat = "General"
+                    if "perceivable" in cat_lower:
+                        norm_cat = "Perceivable"
+                    elif "operable" in cat_lower:
+                        norm_cat = "Operable"
+                    elif "understandable" in cat_lower:
+                        norm_cat = "Understandable"
+                    elif "robust" in cat_lower:
+                        norm_cat = "Robust"
+                    
+                    full_matrix[a_lower][norm_cat] += val
+    else:
+        # Calculate matrix dynamically from findings
+        for f in findings:
+            if isinstance(f, dict):
+                agent = str(f.get("agent", "axe")).lower()
+                category = str(f.get("category", "General")).lower()
+                
+                norm_cat = "General"
+                if "perceivable" in category:
+                    norm_cat = "Perceivable"
+                elif "operable" in category:
+                    norm_cat = "Operable"
+                elif "understandable" in category:
+                    norm_cat = "Understandable"
+                elif "robust" in category:
+                    norm_cat = "Robust"
+                
+                if agent in full_matrix:
+                    full_matrix[agent][norm_cat] += 1
 
     # Start building HTML
     html = f"""
@@ -124,10 +167,12 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 margin-bottom: 20px;
                 page-break-inside: avoid;
             }}
+            /* Style overrides for standard and agent findings */
             .finding.visual {{ border-left-color: #4299e1; }}
             .finding.motor {{ border-left-color: #48bb78; }}
             .finding.cognitive {{ border-left-color: #9f7aea; }}
             .finding.neural {{ border-left-color: #f56565; }}
+            .finding.axe {{ border-left-color: #718096; }}
             
             .finding-header {{
                 display: flex;
@@ -155,6 +200,7 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             .badge.motor {{ background: #48bb78; }}
             .badge.cognitive {{ background: #9f7aea; }}
             .badge.neural {{ background: #f56565; }}
+            .badge.axe {{ background: #718096; }}
             .badge.below-a {{ background: #e53e3e; border: 1px solid #feb2b2; }}
             .badge.unknown {{ background: #a0aec0; }}
             
@@ -199,6 +245,12 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                     <h3>Total Finds</h3>
                     <p class="number">{total_findings}</p>
                 </div>
+                {f'''
+                <div class="card" style="background: #edf2f7; border-color: #cbd5e0;">
+                    <h3 style="color: #4a5568;">Standard (Axe)</h3>
+                    <p class="number" style="color: #2d3748;">{by_agent.get('axe', 0) + by_agent.get('unknown', 0)}</p>
+                </div>
+                ''' if by_agent.get('axe', 0) > 0 or by_agent.get('unknown', 0) > 0 else ''}
                 <div class="card">
                     <h3>Visual</h3>
                     <p class="number">{by_agent.get('visual', 0)}</p>
@@ -217,7 +269,6 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 </div>
             </div>
 
-            {f'''
             <div class="matrix-section">
                 <h2>Forensic Diagnostic Matrix</h2>
                 <table class="matrix-table">
@@ -234,70 +285,144 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                         {''.join([f"""
                         <tr>
                             <td class="matrix-label">{agent.upper()}</td>
-                            <td class="{'matrix-value' if matrix[agent].get('Perceivable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Perceivable', 0)}</td>
-                            <td class="{'matrix-value' if matrix[agent].get('Operable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Operable', 0)}</td>
-                            <td class="{'matrix-value' if matrix[agent].get('Understandable',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Understandable', 0)}</td>
-                            <td class="{'matrix-value' if matrix[agent].get('Robust',0) > 0 else 'matrix-zero'}">{matrix[agent].get('Robust', 0)}</td>
-                        </tr>""" for agent in matrix.keys()])}
+                            <td class="{'matrix-value' if full_matrix[agent].get('Perceivable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Perceivable', 0)}</td>
+                            <td class="{'matrix-value' if full_matrix[agent].get('Operable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Operable', 0)}</td>
+                            <td class="{'matrix-value' if full_matrix[agent].get('Understandable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Understandable', 0)}</td>
+                            <td class="{'matrix-value' if full_matrix[agent].get('Robust',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Robust', 0)}</td>
+                        </tr>""" for agent in agents_list])}
                     </tbody>
                 </table>
             </div>
-            ''' if matrix else ''}
             
             <h2>Detailed Findings</h2>
     """
 
-    for idx, finding in enumerate(findings, 1):
-        # Data Mapping Layer (Supports legacy and Phase XII structures)
-        agent = finding.get("agent", "axe").lower()
-        violation = finding.get("violation", finding.get("rule_id", "Issue")).replace("_", " ")
-        guideline = finding.get("guideline", finding.get("compliance_level", "N/A"))
-        category = finding.get("category", "")
-        issue_desc = finding.get("issue", finding.get("description", "No description provided."))
-        impact = finding.get("impact", "N/A")
-        element = finding.get("element", finding.get("selector", ""))
-        fix = finding.get("fix", "No fix recommended.")
-        url = finding.get("url", "")
-        
-        # Forensic Intelligence Markers
-        is_below_a = finding.get("compliance_level") == "Below A"
-        
-        html += f"""
-            <div class="finding {agent}">
-                <div class="finding-header">
-                    <h3 class="finding-title">{idx}. {violation} {'['+category.upper()+']' if category else ''}</h3>
-                    <div style="display: flex; gap: 8px;">
-                        {f'<span class="badge below-a">Below A</span>' if is_below_a else ''}
-                        <span class="badge {agent}">{agent}</span>
-                        <span class="badge unknown" style="background: #edf2f7; color: #4a5568;">{guideline}</span>
-                    </div>
-                </div>
-                {f'<div class="url-source">Source: {url}</div>' if url else ''}
-                <div class="row">
-                    <span class="label">Impact:</span> {impact}
-                </div>
-                <div class="row">
-                    <span class="label">Issue:</span> {issue_desc}
-                </div>
-        """
-        
-        if element:
-            # Escape HTML tags for display
-            safe_element = str(element).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            html += f"""
-                <div class="row" style="margin-top: 15px;">
-                    <span class="label" style="display: block; margin-bottom: 5px;">Selector/Element:</span>
-                    <div class="code-block">{safe_element}</div>
-                </div>
-            """
+    # Group findings by agent
+    grouped_findings = {
+        "axe": [],
+        "visual": [],
+        "motor": [],
+        "cognitive": [],
+        "neural": []
+    }
+    for f in findings:
+        agent = str(f.get("agent", "axe")).lower()
+        if agent not in grouped_findings:
+            grouped_findings[agent] = []
+        grouped_findings[agent].append(f)
+
+    # Friendly titles for each group
+    agent_titles = {
+        "axe": "Standard Accessibility Violations (Axe Core)",
+        "visual": "Visual Accessibility Agent Findings",
+        "motor": "Motor & Mobility Agent Findings",
+        "cognitive": "Cognitive Accessibility Agent Findings",
+        "neural": "Neural & Cognitive Emulation Findings"
+    }
+
+    global_idx = 1
+    for agent_key in ["axe", "visual", "motor", "cognitive", "neural"]:
+        agent_list = grouped_findings[agent_key]
+        if not agent_list:
+            continue
             
+        agent_title = agent_titles.get(agent_key, f"{agent_key.upper()} Findings")
         html += f"""
-                <div class="fix-block">
-                    <div class="fix-title">Recommended Fix:</div>
-                    <div>{fix}</div>
-                </div>
+            <div class="agent-group-header" style="margin-top: 40px; margin-bottom: 20px; page-break-after: avoid;">
+                <h2 style="font-size: 1.5rem; color: #2c5282; border-bottom: 2px solid #cbd5e0; padding-bottom: 8px;">
+                    {agent_title} ({len(agent_list)})
+                </h2>
             </div>
         """
+        
+        for finding in agent_list:
+            agent = finding.get("agent", "axe").lower()
+            violation = finding.get("violation", finding.get("rule_id", "Issue")).replace("_", " ")
+            guideline = finding.get("guideline", finding.get("compliance_level", "N/A"))
+            category = finding.get("category", "")
+            issue_desc = finding.get("issue", finding.get("description", "No description provided."))
+            impact = finding.get("impact", "N/A")
+            element = finding.get("element", finding.get("selector", ""))
+            url = finding.get("url", "")
+            
+            # Extract Recommended Fix
+            fix = finding.get("fix", "")
+            if not fix:
+                if agent == "axe":
+                    nodes = finding.get("nodes", [])
+                    if nodes and isinstance(nodes, list) and len(nodes) > 0:
+                        first_node = nodes[0]
+                        if isinstance(first_node, dict):
+                            fix = first_node.get("failure_summary", first_node.get("failureSummary", ""))
+                else:
+                    desc = finding.get("description", "")
+                    if "Fix Recommended: " in desc:
+                        fix = desc.split("Fix Recommended: ", 1)[1]
+                    else:
+                        nodes = finding.get("nodes", [])
+                        if nodes and isinstance(nodes, list) and len(nodes) > 0:
+                            first_node = nodes[0]
+                            if isinstance(first_node, dict):
+                                fix = first_node.get("fix", first_node.get("failure_summary", ""))
+            
+            if not fix:
+                fix = "No fix recommended."
+                
+            # Extract subcategory from tags
+            tags = finding.get("tags", [])
+            subcategory = ""
+            for t in tags:
+                if isinstance(t, str) and t.startswith("cat."):
+                    subcategory = t[4:].replace("-", " ").title()
+                    break
+            
+            if category and subcategory:
+                cat_display = f"[{category.upper()} - {subcategory.upper()}]"
+            elif category:
+                cat_display = f"[{category.upper()}]"
+            else:
+                cat_display = ""
+                
+            # Forensic Intelligence Markers
+            is_below_a = finding.get("compliance_level") == "Below A"
+            
+            html += f"""
+                <div class="finding {agent}">
+                    <div class="finding-header">
+                        <h3 class="finding-title">{global_idx}. {violation} {cat_display}</h3>
+                        <div style="display: flex; gap: 8px;">
+                            {f'<span class="badge below-a">Below A</span>' if is_below_a else ''}
+                            <span class="badge {agent}">{agent}</span>
+                            <span class="badge unknown" style="background: #edf2f7; color: #4a5568;">{guideline}</span>
+                        </div>
+                    </div>
+                    {f'<div class="url-source">Source: {url}</div>' if url else ''}
+                    <div class="row">
+                        <span class="label">Impact:</span> {impact}
+                    </div>
+                    <div class="row">
+                        <span class="label">Issue:</span> {issue_desc}
+                    </div>
+            """
+            
+            if element:
+                # Escape HTML tags for display
+                safe_element = str(element).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                html += f"""
+                    <div class="row" style="margin-top: 15px;">
+                        <span class="label" style="display: block; margin-bottom: 5px;">Selector/Element:</span>
+                        <div class="code-block">{safe_element}</div>
+                    </div>
+                """
+                
+            html += f"""
+                    <div class="fix-block">
+                        <div class="fix-title">Recommended Fix:</div>
+                        <div>{fix}</div>
+                    </div>
+                </div>
+            """
+            global_idx += 1
 
     html += """
         </div>
@@ -325,7 +450,8 @@ def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     print(f"Generating PDF for {len(data.get('findings', []))} findings...")
     
     # Write to a temporary HTML file to bypass Playwright IPC string size limits
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8") as temp_html:
+    output_dir = os.path.dirname(os.path.abspath(output_pdf_path))
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8", dir=output_dir) as temp_html:
         temp_html.write(html_content)
         temp_html_path = temp_html.name
         

@@ -43,7 +43,7 @@ export const GraphView = () => {
         return (
             <div className="h-full flex flex-col items-center justify-center text-on-surface-variant gap-2">
                 <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-xs font-medium">Connecting to TigerGraph...</span>
+                <span className="text-xs font-medium">Connecting to Graph Database...</span>
             </div>
         );
     }

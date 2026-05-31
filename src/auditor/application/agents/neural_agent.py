@@ -157,4 +157,20 @@ class NeuralAgent(IAccessibilityAgent):
 
     def _get_mock_findings(self, page_data: PageData) -> List[AgentFinding]:
         """Fallback findings if transformers fails to initialize."""
-        return []
+        return [
+            AgentFinding(
+                agent=self.agent_name,
+                violation_type="cognitive-complexity",
+                guideline="Understandable",
+                element="body",
+                selector="body",
+                issue="Neural Agent running in fallback/mock mode.",
+                impact="medium",
+                fix="Install transformers and download model to run full neural audits.",
+                confidence=0.5,
+                source="mock",
+                wcag_criterion="3.1.1",
+                session_id=page_data.session_id
+            )
+        ]
+

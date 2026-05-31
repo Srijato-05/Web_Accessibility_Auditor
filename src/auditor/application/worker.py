@@ -13,8 +13,9 @@ Responsibilities:
 import asyncio
 import os
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from uuid import uuid4
+import psutil # type: ignore
 
 # IDE PATH RECONCILIATION
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -32,9 +33,7 @@ from auditor.domain.crawler import LinkDiscoveryService # type: ignore
 from auditor.application.audit_service import AuditService # type: ignore
 from auditor.application.crawl_service import CrawlService # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
-
-DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
-REDIS_URL = "redis://localhost:6379"
+from auditor.shared.paths import DATABASE_URL, REDIS_URL # type: ignore
 
 class AuditWorker:
     """
@@ -48,6 +47,19 @@ class AuditWorker:
         self.logger = auditor_logger.getChild(f"Worker.{worker_id}")
         self._active = True
 
+    def _is_system_overloaded(self) -> Tuple[bool, float, float]:
+        try:
+            # interval=None does a non-blocking check
+            cpu_load = psutil.cpu_percent(interval=None)
+            memory_info = psutil.virtual_memory()
+            mem_load = memory_info.percent
+            threshold = float(os.getenv("AUDITOR_BACKPRESSURE_THRESHOLD", "85.0"))
+            if cpu_load > threshold or mem_load > threshold:
+                return True, cpu_load, mem_load
+            return False, cpu_load, mem_load
+        except Exception:
+            return False, 0.0, 0.0
+
     async def start(self):
         """Main event loop for task consumption."""
         self.logger.info(f"Audit Worker {self.worker_id} ONLINE. Awaiting tasks...")
@@ -58,6 +70,14 @@ class AuditWorker:
             await self.queue.reset_abandoned_tasks()
 
             while self._active:
+                overloaded, cpu, mem = self._is_system_overloaded()
+                if overloaded:
+                    self.logger.warning(
+                        f"System Overloaded (CPU: {cpu}%, MEM: {mem}%). Deferring task consumption (sleeping 5s)..."
+                    )
+                    await asyncio.sleep(5)
+                    continue
+
                 task = await self.queue.pop_task(timeout=5)
                 if not task:
                     continue
@@ -92,7 +112,7 @@ class AuditWorker:
             
             await self.queue.complete_task(task_id)
         except Exception as e:
-            self.logger.error(f"Task Execution Failure [{task_id}]: {e}")
+            self.logger.exception(f"Task Execution Failure [{task_id}]")
             await self.queue.fail_task(task_id, str(e))
 
     async def _run_site_audit(self, url: str):
@@ -122,7 +142,7 @@ class AuditWorker:
                 await crawl_orchestrator.run(url)
                 self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
             except Exception as e:
-                self.logger.error(f"Distributed Audit Failure [{url}]: {e}")
+                self.logger.exception(f"Distributed Audit Failure [{url}]")
             finally:
                 if browser:
                     await browser.teardown()
@@ -148,7 +168,7 @@ class AuditWorker:
             except asyncio.TimeoutError:
                 self.logger.error(f"Surgical Watchdog Triggered: Audit for {url} exceeded 10-minute mission limit. Aborting.")
             except Exception as e:
-                self.logger.error(f"Surgical Audit Failure [{url}]: {e}")
+                self.logger.exception(f"Surgical Audit Failure [{url}]")
             finally:
                 # Cleanup browser cluster
                 if browser:

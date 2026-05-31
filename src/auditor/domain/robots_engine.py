@@ -17,7 +17,7 @@ from typing import List
 import os
 import sys
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _root not in sys.path:
+if _root not in sys.path:  # pragma: no cover
     sys.path.insert(0, _root)
 
 from auditor.shared.logging import auditor_logger # type: ignore
