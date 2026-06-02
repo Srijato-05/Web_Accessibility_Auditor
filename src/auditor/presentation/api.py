@@ -138,65 +138,53 @@ async def get_dashboard_summary():
         repository = SqlAlchemyAuditRepository(db_session)
         recent = await repository.list_recent_sessions(limit=100)
 
-        # Tally violations across all sessions
+        # Tally violations across all sessions using unique deduplicated occurrences
         total_critical: int = 0
         total_major: int = 0
         total_minor: int = 0
-        for s in recent:
-            if s.violations:
-                for v in s.violations:
-                    impact = v.impact.value if hasattr(v.impact, "value") else str(v.impact)
-                    if impact == "critical":
-                        total_critical += 1 # type: ignore
-                    elif impact in ("serious", "major"):
-                        total_major += 1 # type: ignore
-                    else:
-                        total_minor += 1 # type: ignore
-
-        # Tally Agentic Missions
+        all_violations: int = 0
         agent_counts = {"visual": 0, "motor": 0, "cognitive": 0, "neural": 0}
-        # Tally categories
         cat_counts = {"color_contrast": 0, "aria_semantics": 0, "keyboard_navigation": 0, "structure": 0}
+
         for s in recent:
             if hasattr(s, 'agent_summary') and s.agent_summary:
                 agent_counts["visual"] += s.agent_summary.get("visual_count", 0)
                 agent_counts["motor"] += s.agent_summary.get("motor_count", 0)
                 agent_counts["cognitive"] += s.agent_summary.get("cognitive_count", 0)
                 agent_counts["neural"] += s.agent_summary.get("neural_count", 0)
-            if s.violations:
-                from auditor.shared.compliance_mapper import ComplianceMapper
-                for v in s.violations:
-                    cat_name = getattr(v, "category", "") or "General"
-                    if cat_name in ("General", "General Accessibility"):
-                        # Fallback calculation if database has stale record
-                        cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
-                        
-                    if "perceivable" in cat_name.lower():
+
+            violations_data = await get_audit_violations(str(s.id))
+            for v in violations_data:
+                for node in v.get("nodes", []):
+                    all_violations += 1
+                    impact = (node.get("impact") or v.get("impact") or "minor").lower()
+                    if impact == "critical":
+                        total_critical += 1
+                    elif impact in ("serious", "major"):
+                        total_major += 1
+                    else:
+                        total_minor += 1
+
+                    # Tally categories based on the deduplicated nodes
+                    cat_name = v.get("category", "") or "General"
+                    if "perceivable" in cat_name.lower() or "color" in cat_name.lower():
                         cat_counts["color_contrast"] += 1
-                    elif "operable" in cat_name.lower():
+                    elif "operable" in cat_name.lower() or "keyboard" in cat_name.lower():
                         cat_counts["keyboard_navigation"] += 1
-                    elif "understandable" in cat_name.lower():
+                    elif "understandable" in cat_name.lower() or "structure" in cat_name.lower():
                         cat_counts["structure"] += 1
-                    elif "robust" in cat_name.lower():
+                    elif "robust" in cat_name.lower() or "aria" in cat_name.lower():
                         cat_counts["aria_semantics"] += 1
                     else:
-                        # Secondary fallback
-                        rule_id_lower = (v.rule_id or "").lower()
-                        if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
-                            cat_counts["color_contrast"] += 1
-                        elif any(x in rule_id_lower for x in ["aria", "role", "label", "agent-cognitive", "agent-neural"]):
-                            cat_counts["aria_semantics"] += 1
-                        elif any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "agent-motor"]):
-                            cat_counts["keyboard_navigation"] += 1
-                        else:
-                            cat_counts["structure"] += 1
+                        cat_counts["structure"] += 1
 
         # Build recent_scans list with the shape Dashboard.tsx needs
         recent_scans = []
         for s in recent[:5]:
-            v_list = s.violations or []
-            crit = sum(1 for v in v_list if (v.impact.value if hasattr(v.impact, "value") else str(v.impact)) == "critical")
-            score = max(0, round(100 - (crit * 10) - (len(v_list) * 0.5)))
+            violations_data = await get_audit_violations(str(s.id))
+            nodes_count = sum(len(v.get("nodes", [])) for v in violations_data)
+            crit = sum(1 for v in violations_data for node in v.get("nodes", []) if (node.get("impact") or v.get("impact") or "").lower() == "critical")
+            score = max(0, round(100 - (crit * 10) - (nodes_count * 0.5)))
             recent_scans.append({
                 "id": str(s.id),
                 "url": s.target_url,
@@ -205,9 +193,7 @@ async def get_dashboard_summary():
                 "date": (s.started_at or s.created_at or datetime.datetime.now()).isoformat(),
             })
 
-        # Overall health score across all sessions
-        all_violations: int = sum(len(s.violations or []) for s in recent)
-        health_score: int = max(0, round(100 - (total_critical * 5) - (all_violations * 0.2))) if recent else 100 # type: ignore
+        health_score: int = max(0, round(100 - (total_critical * 5) - (all_violations * 0.2))) if recent else 100
 
         return {
             "health_score": min(100, health_score),
@@ -242,18 +228,15 @@ async def get_audit_violations(audit_id: str):
         if not session or not session.violations:
             return []
             
-        result = []
-        for i, v in enumerate(session.violations):
+        grouped = {}
+        for v in session.violations:
             impact_val = v.impact.value if hasattr(v.impact, 'value') else str(v.impact)
-            
-            # Map impact to Frontend Severity
             severity = impact_val.capitalize()
             
             # Categorization Logic for Insights.tsx
             from auditor.shared.compliance_mapper import ComplianceMapper
             cat_name = getattr(v, "category", "") or "General"
             if cat_name in ("General", "General Accessibility"):
-                # Fallback calculation if database has stale record
                 cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
                 
             if "perceivable" in cat_name.lower():
@@ -265,7 +248,6 @@ async def get_audit_violations(audit_id: str):
             elif "robust" in cat_name.lower():
                 category = "ARIA & Semantics"
             else:
-                # Secondary fallback
                 rule_id_lower = v.rule_id.lower()
                 if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
                     category = "Color & Contrast"
@@ -279,32 +261,61 @@ async def get_audit_violations(audit_id: str):
             # Use the first node for selector and html if available
             target_str = v.selector if hasattr(v, 'selector') else "Unknown"
             html_str = ""
+            nodes_list = []
             if hasattr(v, 'nodes') and v.nodes:
                 target_str = str(v.nodes[0].get("target", target_str))
                 html_str = str(v.nodes[0].get("html", ""))
+                for node in v.nodes:
+                    enriched_node = dict(node)
+                    enriched_node["impact"] = impact_val
+                    nodes_list.append(enriched_node)
+            else:
+                nodes_list = [{"html": html_str or "N/A", "target": target_str, "failure_summary": v.description, "impact": impact_val}]
                 
             session_str = str(audit_id)
             rule_str = v.rule_id or "generic"
             selector_str = target_str or ""
             stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
 
-            result.append({
-                "id": stable_id, # Stable and deterministic UUID
-                "rule_id": v.rule_id,
-                "impact": impact_val,
-                "description": v.description,
-                "target": target_str,
-                "html": html_str,
-                "help_url": v.help_url if hasattr(v, 'help_url') else "",
-                # --- START FRONTEND ALIASES ---
-                "severity": severity,
-                "type": v.rule_id,
-                "message": v.description,
-                "category": category
-                # --- END FRONTEND ALIASES ---
-            })
-            
-        return result
+            if stable_id in grouped:
+                existing = grouped[stable_id]
+                # Merge nodes to avoid exact duplicates
+                existing_htmls = {n.get("html") for n in existing["nodes"]}
+                for node in nodes_list:
+                    if node.get("html") not in existing_htmls:
+                        existing["nodes"].append(node)
+                
+                # Update occurrences count
+                existing["occurrences"] = len(existing["nodes"])
+                
+                # Take highest impact
+                impact_levels = {"critical": 4, "serious": 3, "moderate": 2, "minor": 1}
+                current_level = impact_levels.get(existing["impact"].lower(), 0)
+                new_level = impact_levels.get(impact_val.lower(), 0)
+                if new_level > current_level:
+                    existing["impact"] = impact_val
+                    existing["severity"] = severity
+            else:
+                grouped[stable_id] = {
+                    "id": stable_id,
+                    "rule_id": v.rule_id,
+                    "impact": impact_val,
+                    "description": v.description,
+                    "target": target_str,
+                    "html": html_str,
+                    "help_url": v.help_url if hasattr(v, 'help_url') else "",
+                    "occurrences": len(nodes_list),
+                    "nodes": nodes_list,
+                    # --- START FRONTEND ALIASES ---
+                    "severity": severity,
+                    "type": v.rule_id,
+                    "message": v.description,
+                    "category": category,
+                    "agent": v.agent or "axe"
+                    # --- END FRONTEND ALIASES ---
+                }
+        
+        return list(grouped.values())
 
 
 @router.post("/violations/{violation_id}/fix")
@@ -473,40 +484,59 @@ async def get_violation(violation_id: str):
         raise HTTPException(status_code=400, detail="Invalid violation ID")
 
     async with AsyncSession(engine) as db_session:
-        # 1. Attempt lookup by database ID
         from sqlmodel import select
+        
+        # 1. Gather all violations matching the requested ID or stable ID
+        matching_violations = []
+        
+        # Try direct database ID lookup first
         stmt = select(ViolationModel).where(ViolationModel.id == parsed_id)
         res = await db_session.exec(stmt)
-        v = res.first()
-        
-        # 2. Fallback: Search by stable_id match across all violations
-        if not v:
-            # Let's fetch all violations (since it's a small local DB, this is very fast and safe)
-            all_stmt = select(ViolationModel)
-            all_res = await db_session.exec(all_stmt)
-            all_v = all_res.all()
-            for cand in all_v:
-                session_str = str(cand.session_id)
-                rule_str = cand.rule_id or "generic"
-                selector_str = cand.selector or ""
-                stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
-                if stable_id == violation_id:
-                    v = cand
-                    break
+        db_v = res.first()
+        if db_v:
+            matching_violations.append(db_v)
+            
+        # Fallback: Scan DB for stable_id matches
+        all_stmt = select(ViolationModel)
+        all_res = await db_session.exec(all_stmt)
+        all_v = all_res.all()
+        for cand in all_v:
+            session_str = str(cand.session_id)
+            rule_str = cand.rule_id or "generic"
+            selector_str = cand.selector or ""
+            stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
+            if stable_id == violation_id:
+                if not db_v or db_v.id != cand.id:
+                    matching_violations.append(cand)
                     
-        if not v:
+        if not matching_violations:
             raise HTTPException(status_code=404, detail="Violation not found")
 
-        # Extract node details
-        current_fragment = "<!-- HTML source snippet -->"
-        occurrences = 1
-        selector = v.selector or "Unknown"
-        if v.nodes:
-            occurrences = len(v.nodes)
-            current_fragment = v.nodes[0].get("html", current_fragment)
-            selector = v.nodes[0].get("target", selector)
-            if isinstance(selector, list):
-                selector = ", ".join(selector)
+        # Represent using the first matching violation
+        v = matching_violations[0]
+        
+        # Merge all unique nodes
+        all_nodes = []
+        seen_htmls = set()
+        for mv in matching_violations:
+            if mv.nodes:
+                for node in mv.nodes:
+                    html = node.get("html", "")
+                    if html not in seen_htmls:
+                        seen_htmls.add(html)
+                        all_nodes.append(node)
+            else:
+                fallback_html = "<!-- HTML source snippet -->"
+                fallback_sel = mv.selector or "Unknown"
+                if fallback_html not in seen_htmls:
+                    seen_htmls.add(fallback_html)
+                    all_nodes.append({"html": fallback_html, "target": fallback_sel, "failure_summary": mv.description})
+
+        occurrences = len(all_nodes)
+        current_fragment = all_nodes[0].get("html", "<!-- HTML source snippet -->") if all_nodes else "<!-- HTML source snippet -->"
+        selector = all_nodes[0].get("target", v.selector or "Unknown") if all_nodes else (v.selector or "Unknown")
+        if isinstance(selector, list):
+            selector = ", ".join(selector)
 
         # Generate a premium dynamic suggested fix
         suggested_fix = f"<!-- Suggested remediation for {v.rule_id} -->"
@@ -534,7 +564,8 @@ async def get_violation(violation_id: str):
             "occurrences": occurrences,
             "selector": selector,
             "current_fragment": current_fragment,
-            "suggested_fix": suggested_fix
+            "suggested_fix": suggested_fix,
+            "agent": getattr(v, "agent", "axe") or "axe"
         }
 
 class SettingsUpdate(BaseModel):
@@ -655,6 +686,7 @@ async def get_session(session_id: str):
             "date": session.started_at.isoformat() if session.started_at else datetime.datetime.now().isoformat(),
             "completed_at": session.updated_at.isoformat() if session.updated_at else None,
             "violations": violations_data,
+            "focus_path": getattr(session, 'focus_path', []),
             "remediation_plan": session.remediation_plan,
             "agent_summary": session.agent_summary,
             "error_message": session.error_message

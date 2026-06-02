@@ -24,7 +24,7 @@ export default function Help() {
   ];
 
   const faqs = [
-    { q: 'How does Sentinel calculate the compliance score?', a: 'Sentinel checks your pages using both standard automated rules (Axe-Core) and dynamic heuristics run by active Chrome browsers (e.g. keyboard trapping, accessibility tags completeness). These are compiled into a final score from 0 to 100.' },
+    { q: 'How does Sentinel audit compliance?', a: 'Sentinel checks your pages using both standard automated rules (Axe-Core) and dynamic heuristics run by active Chrome browsers (e.g. keyboard trapping, accessibility tags completeness) to compile diagnostic reports.' },
     { q: 'What is Deep Audit Mode?', a: 'Standard scans execute rapid parsing check heuristics. Deep Audit runs a thorough DOM traversal checking visual alignments, dynamic contrast changes, and interactive form structures.' },
     { q: 'How do I export CSV reports?', a: 'Head to Settings (Profile) page, and select "Export Complete Organization Logs" to download your complete audit logs in CSV format.' }
   ];

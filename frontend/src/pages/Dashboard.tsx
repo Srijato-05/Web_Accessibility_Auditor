@@ -255,6 +255,7 @@ export default function Dashboard() {
                 <thead>
                   <tr className="border-b border-surface-border bg-surface-highlight/50 text-xs uppercase tracking-wider text-on-surface-variant font-bold">
                     <th scope="col" className="px-6 py-4">Target Host</th>
+                    <th scope="col" className="px-6 py-4 text-center">Compliance Level</th>
                     <th scope="col" className="px-6 py-4 text-center">Advice Report</th>
                     <th scope="col" className="px-6 py-4 text-right">Timestamp</th>
                   </tr>
@@ -269,6 +270,15 @@ export default function Dashboard() {
                             {log.url}
                           </Link>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
+                          log.status === 'completed' ? 'bg-primary/10 text-primary border border-primary/20' :
+                          log.status === 'failed' ? 'bg-error/10 text-error border border-error/20' :
+                          'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                        }`}>
+                          {log.status === 'completed' ? 'Completed' : log.status === 'failed' ? 'Failed' : 'In Progress'}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <button

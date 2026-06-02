@@ -8,7 +8,7 @@ export default function Audits() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [sortKey, setSortKey] = useState<'url' | 'score' | 'date'>('date');
+  const [sortKey, setSortKey] = useState<'url' | 'status' | 'date'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
@@ -27,11 +27,12 @@ export default function Audits() {
     const matchesSearch = scan.url.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'all' || 
       (statusFilter === 'completed' && scan.status === 'completed') ||
-      (statusFilter === 'pending' && scan.status !== 'completed');
+      (statusFilter === 'failed' && scan.status === 'failed') ||
+      (statusFilter === 'pending' && scan.status !== 'completed' && scan.status !== 'failed');
     return matchesSearch && matchesStatus;
   });
 
-  const handleSort = (key: 'url' | 'score' | 'date') => {
+  const handleSort = (key: 'url' | 'status' | 'date') => {
     if (sortKey === key) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
@@ -62,7 +63,7 @@ export default function Audits() {
     <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen">
       <header className="mb-10 border-b border-surface-border pb-8">
         <h1 className="text-3xl font-heading font-bold text-on-surface">Audits Ledger</h1>
-        <p className="text-on-surface-variant mt-2 text-sm">Review full list of target domains and detailed compliance scores.</p>
+        <p className="text-on-surface-variant mt-2 text-sm">Review full list of target domains and audit progress.</p>
       </header>
 
       {/* Quick counters grid */}
@@ -72,16 +73,16 @@ export default function Audits() {
           <span className="text-2xl font-heading font-bold text-on-surface mt-1">{scans.length}</span>
         </div>
         <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-primary">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">AAA Certified</span>
-          <span className="text-2xl font-heading font-bold text-primary mt-1">{scans.filter(s => s.status === 'completed' && s.score >= 85).length}</span>
-        </div>
-        <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-warning">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">AA Compliance</span>
-          <span className="text-2xl font-heading font-bold text-warning mt-1">{scans.filter(s => s.status === 'completed' && s.score > 0 && s.score < 85).length}</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Completed</span>
+          <span className="text-2xl font-heading font-bold text-primary mt-1">{scans.filter(s => s.status === 'completed').length}</span>
         </div>
         <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-error">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Pending Scans</span>
-          <span className="text-2xl font-heading font-bold text-error mt-1">{scans.filter(s => s.status !== 'completed' && s.status !== 'failed').length}</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Failed</span>
+          <span className="text-2xl font-heading font-bold text-error mt-1">{scans.filter(s => s.status === 'failed').length}</span>
+        </div>
+        <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-warning">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">In Progress</span>
+          <span className="text-2xl font-heading font-bold text-warning mt-1">{scans.filter(s => s.status !== 'completed' && s.status !== 'failed').length}</span>
         </div>
       </div>
 
@@ -112,6 +113,7 @@ export default function Audits() {
           >
             <option value="all">All Audits</option>
             <option value="completed">Completed Scans</option>
+            <option value="failed">Failed Scans</option>
             <option value="pending">Pending Scans</option>
           </select>
         </div>
@@ -137,12 +139,12 @@ export default function Audits() {
                 </th>
                 <th 
                   scope="col" 
-                  onClick={() => handleSort('score')}
+                  onClick={() => handleSort('status')}
                   className="px-6 py-4 text-center cursor-pointer hover:text-on-surface transition-colors"
                 >
                   <div className="flex items-center justify-center gap-1.5">
-                    Compliance Status
-                    {sortKey === 'score' ? (
+                    Audit Status
+                    {sortKey === 'status' ? (
                       sortOrder === 'asc' ? <ChevronUp size={12} className="text-primary" /> : <ChevronDown size={12} className="text-primary" />
                     ) : <ArrowUpDown size={10} className="opacity-40" />}
                   </div>
@@ -172,14 +174,11 @@ export default function Audits() {
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
-                      scan.status === 'completed' && scan.score >= 85 ? 'bg-primary/10 text-primary border border-primary/20' :
-                      scan.status === 'completed' && scan.score > 0 ? 'bg-warning/10 text-warning border border-warning/20' :
-                      scan.status === 'completed' ? 'bg-error/10 text-error border border-error/20' :
+                      scan.status === 'completed' ? 'bg-primary/10 text-primary border border-primary/20' :
                       scan.status === 'failed' ? 'bg-error/10 text-error border border-error/20' :
                       'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
                     }`}>
-                      {scan.status === 'completed' ? (scan.score >= 85 ? 'AAA Certified' : scan.score > 0 ? 'AA Compliance' : 'Below A Standard') :
-                       scan.status === 'failed' ? 'Failed' : 'In Progress'}
+                      {scan.status === 'completed' ? 'Completed' : scan.status === 'failed' ? 'Failed' : 'In Progress'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">

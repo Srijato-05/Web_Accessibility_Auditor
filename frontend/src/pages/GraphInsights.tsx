@@ -77,7 +77,6 @@ export default function GraphInsights() {
          {/* Top Node */}
          <div className="flat-panel p-6">
             <div className="flex items-center gap-3 mb-4">
-               <Layers className="text-secondary" size={20} />
                <h3 className="font-bold text-sm tracking-widest uppercase text-on-surface-variant">Top Node</h3>
             </div>
             <p data-testid="top-node-value" className="text-2xl font-heading mb-1 font-bold text-on-surface truncate">{data.top_node}</p>
@@ -86,7 +85,6 @@ export default function GraphInsights() {
          {/* Reach */}
          <div className="flat-panel p-6">
             <div className="flex items-center gap-3 mb-4">
-               <Combine className="text-primary" size={20} />
                <h3 className="font-bold text-sm tracking-widest uppercase text-on-surface-variant">Affected Pages</h3>
             </div>
             <p className="text-2xl font-heading mb-1 font-bold text-on-surface">{data.reach} Pages</p>
@@ -95,7 +93,6 @@ export default function GraphInsights() {
          {/* Impact Probability */}
          <div className={`flat-panel p-6 transition-all duration-700 ${isResolved ? 'border-secondary/35' : 'border-error/35'}`}>
             <div className="flex items-center gap-3 mb-4">
-               {isResolved ? <ShieldCheck className="text-secondary" size={20} /> : <AlertTriangle className="text-error" size={20} />}
                <h3 className={`font-bold text-sm tracking-widest uppercase transition-colors ${isResolved ? 'text-secondary' : 'text-error'}`}>Impact Prob.</h3>
             </div>
             <p className={`text-2xl font-heading mb-1 font-bold transition-colors ${isResolved ? 'text-secondary' : 'text-error'}`}>{isResolved ? 'Stable' : data.impact_probability}</p>
@@ -104,11 +101,10 @@ export default function GraphInsights() {
          {/* Violations Prevented */}
          <div className={`flat-panel p-6 transition-all duration-700 ${isResolved ? 'border-secondary/80 bg-secondary/15' : 'border-secondary/30 bg-secondary/5'}`}>
             <div className="flex items-center gap-3 mb-4">
-               <ShieldCheck className={`transition-colors ${isResolved ? 'text-secondary' : 'text-secondary/80'}`} size={20} />
                <h3 className={`font-bold text-sm tracking-widest uppercase transition-colors ${isResolved ? 'text-secondary' : 'text-secondary/80'}`}>A11y Fixed</h3>
             </div>
             <div className={`flex items-center gap-3 text-2xl font-heading font-bold mb-1 transition-colors ${isResolved ? 'text-secondary' : 'text-secondary/80'}`}>
-               ~{data.violations_prevented} {isResolved && <CheckCircle size={24} />}
+               ~{data.violations_prevented}
             </div>
          </div>
       </div>

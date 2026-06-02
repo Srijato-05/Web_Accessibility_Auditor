@@ -110,6 +110,8 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                 error_message=result.error_message,
                 agent_summary=result.agent_summary or {},
                 remediation_plan=result.remediation_plan or "",
+                focus_path=result.focus_path or [],
+                aria_events=result.aria_events or [],
                 violations=[
                     Violation(
                         rule_id=v.rule_id,

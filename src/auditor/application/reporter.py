@@ -63,32 +63,93 @@ class AuditReporter:
         v_res = await self.session.exec(v_stmt)
         violations = v_res.all()
 
+        # Deduplicate violations by rule + selector and identical html node
+        grouped = {}
+        import uuid
+        NAMESPACE_URL = uuid.NAMESPACE_URL
+        for v in violations:
+            impact_val = v.impact.value if hasattr(v.impact, 'value') else str(v.impact)
+            
+            # Category
+            from auditor.shared.compliance_mapper import ComplianceMapper
+            cat_name = getattr(v, "category", "") or "General"
+            if cat_name in ("General", "General Accessibility"):
+                cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+                
+            # Nodes
+            target_str = v.selector if hasattr(v, 'selector') else "Unknown"
+            html_str = ""
+            nodes_list = []
+            if hasattr(v, 'nodes') and v.nodes:
+                target_str = str(v.nodes[0].get("target", target_str))
+                html_str = str(v.nodes[0].get("html", ""))
+                for node in v.nodes:
+                    enriched_node = dict(node)
+                    enriched_node["impact"] = impact_val
+                    enriched_node["compliance_level"] = v.compliance_level or "N/A"
+                    enriched_node["category"] = cat_name
+                    nodes_list.append(enriched_node)
+            else:
+                nodes_list = [{
+                    "html": html_str or "N/A",
+                    "target": target_str,
+                    "failure_summary": v.description,
+                    "impact": impact_val,
+                    "compliance_level": v.compliance_level or "N/A",
+                    "category": cat_name
+                }]
+                
+            session_str = str(session_record.id)
+            rule_str = v.rule_id or "generic"
+            selector_str = target_str or ""
+            stable_id = str(uuid.uuid5(NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
+
+            if stable_id in grouped:
+                existing = grouped[stable_id]
+                existing_htmls = {n.get("html") for n in existing["nodes"]}
+                for node in nodes_list:
+                    if node.get("html") not in existing_htmls:
+                        existing["nodes"].append(node)
+            else:
+                grouped[stable_id] = {
+                    "rule_id": v.rule_id,
+                    "description": v.description,
+                    "help_url": v.help_url,
+                    "tags": v.tags or [],
+                    "agent": v.agent or "axe",
+                    "url": v.url,
+                    "nodes": nodes_list
+                }
+
+        flattened_violations = []
+        for g_id, g_val in grouped.items():
+            for node in g_val["nodes"]:
+                flattened_violations.append({
+                    "rule_id": g_val["rule_id"],
+                    "uuid": g_id,
+                    "impact": node.get("impact", "minor"),
+                    "description": g_val["description"],
+                    "selector": node.get("target") or "",
+                    "help_url": g_val["help_url"],
+                    "tags": g_val["tags"],
+                    "agent": g_val["agent"],
+                    "compliance_level": node.get("compliance_level", "N/A"),
+                    "category": node.get("category", "General"),
+                    "severity_matrix": node.get("impact", "minor").capitalize(),
+                    "url": g_val["url"],
+                    "html": node.get("html", "")
+                })
+
         # 3. Serialize Data
         report_data = {
             "session_id": str(session_record.id),
             "url": session_record.target_url,
             "start_time": session_record.started_at.isoformat() if session_record.started_at else None,
             "end_time": session_record.completed_at.isoformat() if session_record.completed_at else None,
-            "total_violations": len(violations),
+            "total_violations": len(flattened_violations),
             "focus_path": getattr(session_record, 'focus_path', []),
             "aria_events": getattr(session_record, 'aria_events', []),
-            "violations": [
-                {
-                    "rule_id": getattr(v, "rule_id", "UNKNOWN"),
-                    "uuid": str(getattr(v, "id", "")),
-                    "impact": getattr(v, "impact", "minor"),
-                    "description": getattr(v, "description", ""),
-                    "selector": getattr(v, "selector", ""),
-                    "help_url": getattr(v, "help_url", ""),
-                    "tags": getattr(v, "tags", []),
-                    "agent": getattr(v, "agent", "axe"),
-                    "compliance_level": getattr(v, "compliance_level", "N/A"),
-                    "category": getattr(v, "category", "General"),
-                    "severity_matrix": getattr(v, "severity_matrix", "Moderate"),
-                    "url": getattr(v, "url", ""),
-                    "nodes": getattr(v, "nodes", [])
-                } for v in violations
-            ]
+            "violations": flattened_violations
         }
 
         # 3b. Compute Forensic Matrix (Agents vs Principles)

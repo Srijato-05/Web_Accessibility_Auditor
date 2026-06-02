@@ -63,9 +63,9 @@ describe('Audits Component', () => {
     expect(screen.getByText('https://github.com')).toBeInTheDocument();
     expect(screen.getByText('https://steamunlocked.net')).toBeInTheDocument();
 
-    // Verify dynamic badges based on status and score
-    // https://youtube.com: completed && score 87 -> AAA Certified
-    expect(screen.getAllByText('AAA Certified')[0]).toBeInTheDocument();
+    // Verify dynamic badges based on status
+    // https://youtube.com: completed -> Completed
+    expect(screen.getAllByText('Completed')[0]).toBeInTheDocument();
     // https://github.com: in_progress -> In Progress
     expect(screen.getByText('In Progress')).toBeInTheDocument();
     // https://steamunlocked.net: failed -> Failed
