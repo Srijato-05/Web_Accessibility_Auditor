@@ -92,13 +92,25 @@ class PlaywrightEngine(IBrowserEngine):
         telemetry (Dict): real-time performance and audit metadata.
     """
     
-    def __init__(self, session_id: UUID, headless: bool = True):
+    def __init__(self, session_id: UUID, headless: bool = True, config: Optional[dict] = None):
         self.session_id = session_id
         self.headless = headless
+        self.config = config or {}
         self.playwright_mgr: Optional[Any] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self._page_count = 0
+        
+        self.emulation_status: Dict[str, Any] = {
+            "viewport_applied": False,
+            "dpr_applied": False,
+            "agent_applied": False,
+            "vision_deficiency_applied": False,
+            "network_throttling_applied": False,
+            "media_applied": False,
+            "reduced_data_applied": False,
+            "errors": []
+        }
         
         # Phase VII: Visual Intelligence Data
         self.focus_path: List[Dict[str, Any]] = []
@@ -171,6 +183,77 @@ class PlaywrightEngine(IBrowserEngine):
         try:
             self.logger.debug("Engaging Stealth Phase VI: Polymorphic Evasion...")
             
+            # --- PARSE CONFIGURATION ---
+            viewport_config = self.config.get("viewport")
+            width, height = 1920, 1080  # Default
+            if viewport_config and "x" in viewport_config:
+                try:
+                    w_str, h_str = viewport_config.split("x")
+                    w_val, h_val = int(w_str), int(h_str)
+                    if 100 <= w_val <= 10000 and 100 <= h_val <= 10000:
+                        width, height = w_val, h_val
+                        self.emulation_status["viewport_applied"] = True
+                    else:
+                        self.logger.warning(f"Out of bounds viewport requested: {viewport_config}. Falling back to 1920x1080.")
+                        self.emulation_status["errors"].append(f"Viewport {viewport_config} out of bounds.")
+                except Exception as ve:
+                    self.logger.warning(f"Failed to parse viewport {viewport_config}: {ve}. Falling back to 1920x1080.")
+                    self.emulation_status["errors"].append(f"Failed to parse viewport {viewport_config}: {ve}")
+            else:
+                self.emulation_status["viewport_applied"] = True
+
+            dpr_config = self.config.get("dpr")
+            device_scale_factor = 1.0  # Default
+            if dpr_config:
+                try:
+                    dpr_val = float(dpr_config)
+                    if 0.1 <= dpr_val <= 4.0:
+                        device_scale_factor = dpr_val
+                        self.emulation_status["dpr_applied"] = True
+                    else:
+                        self.logger.warning(f"Out of bounds DPR requested: {dpr_config}. Falling back to 1.0.")
+                        self.emulation_status["errors"].append(f"DPR {dpr_config} out of bounds.")
+                except Exception as de:
+                    self.logger.warning(f"Failed to parse DPR {dpr_config}: {de}. Falling back to 1.0.")
+                    self.emulation_status["errors"].append(f"Failed to parse DPR {dpr_config}: {de}")
+            else:
+                self.emulation_status["dpr_applied"] = True
+
+            agent_config = self.config.get("agent")
+            user_agent = self.profile.get("userAgent")
+            is_mobile = False
+            has_touch = False
+
+            if agent_config == "mobile_chrome":
+                user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                is_mobile = True
+                has_touch = True
+                if not viewport_config:
+                    width, height = 390, 844
+                if not dpr_config:
+                    device_scale_factor = 3.0
+            elif agent_config == "seo_crawler":
+                user_agent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            elif agent_config == "secure_auditor":
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            elif agent_config == "screen_reader":
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; RV:109.0) Gecko/20100101 Firefox/115.0"
+            elif agent_config == "low_vision_zoom":
+                device_scale_factor = 2.0
+
+            if agent_config:
+                self.emulation_status["agent_applied"] = True
+            else:
+                self.emulation_status["agent_applied"] = True
+
+            # Store computed options inside self.profile dictionary for lookup / propagation
+            self.profile["userAgent"] = user_agent
+            self.profile["viewport"] = {"width": width, "height": height}
+            self.profile["deviceScaleFactor"] = device_scale_factor
+            self.profile["isMobile"] = is_mobile
+            self.profile["hasTouch"] = has_touch
+            # ---------------------------
+
             self.browser = await playwright.chromium.launch(
                 headless=self.headless,
                 args=[
@@ -197,9 +280,9 @@ class PlaywrightEngine(IBrowserEngine):
                         user_agent=self.profile['userAgent'],
                         java_script_enabled=True,
                         bypass_csp=True,
-                        device_scale_factor=random.choice([1, 2]),
-                        is_mobile=False,
-                        has_touch=False,
+                        device_scale_factor=self.profile.get('deviceScaleFactor', 1.0),
+                        is_mobile=self.profile.get('isMobile', False),
+                        has_touch=self.profile.get('hasTouch', False),
                         # Cycle 3: HAR Network Harvesting
                         record_har_path=f"reports/forensics/har/session_{self.session_id}.har" if self.session_id else None
                     )
@@ -403,6 +486,28 @@ class PlaywrightEngine(IBrowserEngine):
         _self = cast(Any, self)
         _self.telemetry["start_time"] = datetime.now()
         start_time = time.time()
+
+        # Load settings dynamically
+        import json
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        user_agent_setting = settings.get("user_agent", "default")
+        if user_agent_setting != "default":
+            ua_map = {
+                "googlebot": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6156.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                "lighthouse": "Mozilla/5.0 (Linux; Android 11; moto g power (2021)) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36 Chrome-Lighthouse",
+                "desktop-chrome": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "mobile-safari": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+            }
+            if user_agent_setting in ua_map:
+                _self.profile["userAgent"] = ua_map[user_agent_setting]
         
         # Ensure engine is active
         if not _self.browser:
@@ -412,7 +517,8 @@ class PlaywrightEngine(IBrowserEngine):
         if not br:
             raise EngineError("Engine Cluster Failure: Browser offline.")
             
-        MAX_PERSONAS = 3 # Desktop -> Mobile -> Headful
+        retry_limit = settings.get("retry_limit", 3)
+        MAX_PERSONAS = retry_limit + 1
         current_attempt = 1
         
         while current_attempt <= MAX_PERSONAS:
@@ -460,6 +566,9 @@ class PlaywrightEngine(IBrowserEngine):
                         user_agent=_self.profile['userAgent'], # type: ignore
                         java_script_enabled=True,
                         bypass_csp=False, # Disable CSP bypass (sometimes detected)
+                        device_scale_factor=_self.profile.get('deviceScaleFactor', 1.0),
+                        is_mobile=_self.profile.get('isMobile', False),
+                        has_touch=_self.profile.get('hasTouch', False),
                         record_har_path=f"reports/forensics/har/session_{_self.session_id}.har" if _self.session_id else None,
                         extra_http_headers={
                             "sec-ch-ua": "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"123\", \"Chromium\";v=\"123\"",
@@ -478,6 +587,121 @@ class PlaywrightEngine(IBrowserEngine):
                         _self.context = local_context
                 
                 page = await local_context.new_page()
+                
+                # --- EMULATIONS START ---
+                # 1. Vision Deficiency Emulation
+                agent_config = _self.config.get("agent")
+                if agent_config == "colorblind_deuteranopia":
+                    try:
+                        await page.emulate_vision_deficiency("deuteranopia")
+                        _self.logger.info("COLORBLIND DEUTERANOPIA EMULATION ACTIVE.")
+                        _self.emulation_status["vision_deficiency_applied"] = True
+                    except Exception as ve:
+                        _self.logger.warning(f"Failed to emulate vision deficiency: {ve}")
+                        _self.emulation_status["errors"].append(f"Vision deficiency emulation failure: {ve}")
+                else:
+                    _self.emulation_status["vision_deficiency_applied"] = True
+
+                # 2. Network Throttling & Latency Emulation via Chrome DevTools Protocol (CDP)
+                network_config = _self.config.get("network")
+                latency_config = _self.config.get("latency")
+                
+                latency_ms = 0
+                if latency_config:
+                    try:
+                        lat_val = int(latency_config)
+                        if 0 <= lat_val <= 15000:
+                            latency_ms = lat_val
+                        else:
+                            _self.logger.warning(f"Latency value {lat_val}ms out of bounds. Capping to 15000ms.")
+                            latency_ms = min(max(0, lat_val), 15000)
+                            _self.emulation_status["errors"].append(f"Latency value {lat_val}ms out of bounds. Capped to 15000ms.")
+                    except Exception as le:
+                        _self.emulation_status["errors"].append(f"Failed to parse latency {latency_config}: {le}")
+                        
+                download_throughput = -1
+                upload_throughput = -1
+                
+                if network_config == "slow_3g":
+                    download_throughput = 400 * 1024  # 400 Kbps
+                    upload_throughput = 400 * 1024
+                    if latency_ms == 0:
+                        latency_ms = 400
+                elif network_config == "fast_3g":
+                    download_throughput = 1600 * 1024  # 1.6 Mbps
+                    upload_throughput = 750 * 1024
+                    if latency_ms == 0:
+                        latency_ms = 150
+                elif network_config == "wifi":
+                    download_throughput = 30 * 1024 * 1024  # 30 Mbps
+                    upload_throughput = 15 * 1024 * 1024
+                    if latency_ms == 0:
+                        latency_ms = 30
+                        
+                if network_config != "none" or latency_ms > 0:
+                    try:
+                        cdp_session = await page.context.new_cdp_session(page)
+                        await cdp_session.send("Network.emulateNetworkConditions", {
+                            "offline": False,
+                            "latency": latency_ms,
+                            "downloadThroughput": download_throughput,
+                            "uploadThroughput": upload_throughput
+                        })
+                        _self.logger.info(f"NETWORK THROTTLING ACTIVE: Network: {network_config}, Latency: {latency_ms}ms")
+                        _self.emulation_status["network_throttling_applied"] = True
+                    except Exception as throttling_err:
+                        _self.logger.warning(f"Failed to establish network throttling: {throttling_err}")
+                        _self.emulation_status["errors"].append(f"Network throttling setup failure: {throttling_err}")
+                else:
+                    _self.emulation_status["network_throttling_applied"] = True
+
+                # 3. Media Features Preferences
+                media_features = []
+                if _self.config.get("reducedMotion"):
+                    media_features.append({"name": "prefers-reduced-motion", "value": "reduce"})
+                    
+                color_scheme = _self.config.get("colorScheme")
+                if color_scheme and color_scheme != "no-preference":
+                    media_features.append({"name": "prefers-color-scheme", "value": color_scheme})
+                    
+                contrast = _self.config.get("contrast")
+                if contrast and contrast != "no-preference":
+                    media_features.append({"name": "prefers-contrast", "value": contrast})
+                    
+                if _self.config.get("forcedColors"):
+                    media_features.append({"name": "forced-colors", "value": "active"})
+                    
+                if _self.config.get("reducedData"):
+                    media_features.append({"name": "prefers-reduced-data", "value": "reduce"})
+                    
+                if media_features:
+                    try:
+                        await page.emulate_media(media_features=media_features)
+                        _self.logger.info(f"MEDIA EMULATION ACTIVE: {media_features}")
+                        _self.emulation_status["media_applied"] = True
+                    except Exception as me:
+                        _self.logger.warning(f"Failed to emulate media features: {me}")
+                        _self.emulation_status["errors"].append(f"Media feature emulation failure: {me}")
+                else:
+                    _self.emulation_status["media_applied"] = True
+
+                # 4. Reduced Data Bandwidth Interceptor (Abort Asset Loading)
+                if _self.config.get("reducedData"):
+                    async def block_assets(route):
+                        if route.request.resource_type in ["image", "media", "font"]:
+                            await route.abort()
+                        else:
+                            await route.continue_()
+                    try:
+                        await page.route("**/*", block_assets)
+                        _self.logger.info("REDUCED DATA ACTIVE: Aborted image, media, and font asset downloads.")
+                        _self.emulation_status["reduced_data_applied"] = True
+                    except Exception as re:
+                        _self.logger.warning(f"Failed to set route for reducedData: {re}")
+                        _self.emulation_status["errors"].append(f"Reduced data interception setup failure: {re}")
+                else:
+                    _self.emulation_status["reduced_data_applied"] = True
+                # --- EMULATIONS END ---
                 
                 # 1. Smart Timeout Adaptation
                 timeout = await _self._get_dynamic_timeout(page, url) # type: ignore
@@ -534,7 +758,57 @@ class PlaywrightEngine(IBrowserEngine):
                 axe_violations: List[Any] = []
                 try:
                     from axe_playwright_python.async_playwright import Axe
-                    results = await Axe().run(page) 
+                    
+                    # Determine target ruleset tags
+                    ruleset_setting = settings.get("ruleset", "wcag21aa")
+                    if ruleset_setting == "wcag22aaa":
+                        tags = ["wcag2a", "wcag2aa", "wcag2aaa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa", "wcag22aaa"]
+                    elif ruleset_setting == "section508":
+                        tags = ["section508"]
+                    elif ruleset_setting == "en301549":
+                        tags = ["experimental", "en301549"]
+                    else:  # default wcag21aa
+                        tags = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]
+                        
+                    # Determine target scope selector
+                    scope_setting = settings.get("audit_scope", "full")
+                    scope_selector = None
+                    if scope_setting == "interactive":
+                        scope_selector = "button, a, input, select, textarea, [role='button'], [role='link']"
+                    elif scope_setting == "text":
+                        scope_selector = "p, h1, h2, h3, h4, h5, h6, span, article, section, li"
+                    elif scope_setting == "media":
+                        scope_selector = "img, video, audio, svg, canvas, picture"
+
+                    # Parse ignored css selectors
+                    ignored_selectors_str = settings.get("ignored_selectors", "")
+                    exclude_list = []
+                    if ignored_selectors_str:
+                        for s in ignored_selectors_str.split(","):
+                            s_stripped = s.strip()
+                            if s_stripped:
+                                exclude_list.append([s_stripped])
+
+                    # Build Axe context parameter
+                    axe_context = None
+                    if scope_selector:
+                        if exclude_list:
+                            axe_context = {"include": [[scope_selector]], "exclude": exclude_list}
+                        else:
+                            axe_context = scope_selector
+                    else:
+                        if exclude_list:
+                            axe_context = {"include": [["html"]], "exclude": exclude_list}
+
+                    # Build Axe options parameter
+                    axe_options = {
+                        "runOnly": {
+                            "type": "tag",
+                            "values": tags
+                        }
+                    }
+
+                    results = await Axe().run(page, context=axe_context, options=axe_options) 
                     
                     if hasattr(results, 'response') and isinstance(results.response, dict):
                         axe_violations = results.response.get("violations", [])
@@ -617,11 +891,21 @@ class PlaywrightEngine(IBrowserEngine):
 
     async def _get_dynamic_timeout(self: "PlaywrightEngine", page: Page, url: str) -> int:
         """Adapts timeout based on hardware load and domain profile."""
-        base_timeout = 60000 
+        import json
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        base_timeout = settings.get("timeout", 30) * 1000
         
         # Resilient Tier: Increase base for Gov portals or known high-latency domains
         if any(gov in url.lower() for gov in [".gov.in", ".nic.in", ".gov", "india.gov.in"]):
-            base_timeout = 90000
+            base_timeout += 30000
             self.logger.info(f"Target identified as High-Latency Portal. Scaling mission timeout to {base_timeout}ms.")
 
         import psutil # type: ignore
@@ -1297,7 +1581,14 @@ class PlaywrightEngine(IBrowserEngine):
         for raw_v in raw_violations:
             if hasattr(raw_v, 'description'):
                 # Already a Violation object (proprietary heuristic)
-                violations.append(cast(Violation, raw_v))
+                v_obj = cast(Violation, raw_v)
+                if not v_obj.category or v_obj.category in ("General Accessibility", "General"):
+                    v_obj.category = ComplianceMapper.get_category(v_obj.tags, v_obj.rule_id, v_obj.agent)
+                if not v_obj.compliance_level or v_obj.compliance_level == "Non-Standard":
+                    v_obj.compliance_level = ComplianceMapper.get_compliance_level(v_obj.tags, v_obj.impact)
+                if not v_obj.severity_matrix or v_obj.severity_matrix == "Unclassified":
+                    v_obj.severity_matrix = ComplianceMapper.get_severity_matrix(v_obj.impact)
+                violations.append(v_obj)
                 continue
                 
             v = cast(Dict[str, Any], raw_v)
@@ -1342,7 +1633,7 @@ class PlaywrightEngine(IBrowserEngine):
                 nodes=node_summaries,
                 tags=tags,
                 compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
-                category=ComplianceMapper.get_category(tags),
+                category=ComplianceMapper.get_category(tags, v.get("id", "AXE-GENERIC"), "axe"),
                 severity_matrix=ComplianceMapper.get_severity_matrix(impact),
                 url=url
             )

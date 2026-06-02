@@ -415,3 +415,76 @@ def test_main_lifespan_startup():
         with TestClient(app) as local_client:
             mock_init.assert_called_once()
 
+def test_api_scans_creation():
+    mock_save_session = AsyncMock()
+    mock_run_worker = AsyncMock()
+    
+    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.save_session", mock_save_session), \
+         patch("auditor.presentation.api.async_run_audit_worker", mock_run_worker):
+        
+        response = client.post("/api/scans", json={"url": "https://scans-test.com", "depth": 1, "agent": "secure_auditor"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "started"
+        assert "scan_id" in data
+        mock_save_session.assert_called_once()
+
+def test_api_update_user_settings():
+    mock_save = MagicMock()
+    with patch("auditor.presentation.api.save_persisted_settings", mock_save):
+        response = client.patch("/api/user/settings", json={"concurrency": 8, "ruleset": "wcag22aaa"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_save.assert_called_once_with({"concurrency": 8, "ruleset": "wcag22aaa", "max_depth": None, "timeout": None, "skip_external": None, "user_agent": None, "politeness_delay": None, "ignored_patterns": None, "retry_limit": None, "robots_txt": None, "audit_scope": None, "report_template": None, "ignored_selectors": None})
+
+
+def test_api_audits_detail():
+    # Invalid session UUID
+    response = client.get("/api/audits/invalid-uuid")
+    assert response.status_code == 400
+    
+    # Session not found
+    mock_get_session = AsyncMock(return_value=None)
+    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.get_session", mock_get_session):
+        response = client.get(f"/api/audits/{uuid.uuid4()}")
+        assert response.status_code == 404
+        
+    # Session present
+    mock_session = MagicMock()
+    mock_session.target_url = "http://target.com"
+    mock_session.status.value = "failed"
+    mock_session.started_at = datetime.datetime.now()
+    mock_session.updated_at = datetime.datetime.now()
+    mock_session.remediation_plan = "remediation details"
+    mock_session.agent_summary = {"applied_config": {"agent": "secure_auditor"}}
+    mock_session.error_message = "Target host unreachable"
+    mock_session.violations = []
+    
+    mock_get_session.return_value = mock_session
+    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.get_session", mock_get_session), \
+         patch("auditor.presentation.api.get_audit_violations", AsyncMock(return_value=[])):
+        response = client.get(f"/api/audits/{uuid.uuid4()}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["remediation_plan"] == "remediation details"
+        assert data["error_message"] == "Target host unreachable"
+        assert data["status"] == "failed"
+        assert data["agent_summary"]["applied_config"]["agent"] == "secure_auditor"
+
+
+def test_api_export_logs_success():
+    with patch("os.path.exists", return_value=True), \
+         patch("auditor.presentation.api.FileResponse", return_value=MagicMock()) as mock_file_response:
+        response = client.get("/api/user/export-logs")
+        assert response.status_code == 200
+        mock_file_response.assert_called_once()
+
+def test_api_export_logs_missing():
+    with patch("os.path.exists", return_value=False):
+        response = client.get("/api/user/export-logs")
+        assert response.status_code == 200
+        assert "No logs recorded yet." in response.text
+
+
+
+

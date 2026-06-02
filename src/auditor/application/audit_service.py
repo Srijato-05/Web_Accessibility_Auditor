@@ -70,7 +70,7 @@ class AuditService:
     # CORE MISSION: THE SECURE AUDIT PIPELINE
     # --------------------------------------------------------------------------
 
-    async def execute_audit(self, url: str, skip_neural: bool = False) -> AuditSession:
+    async def execute_audit(self, url: str, skip_neural: bool = False, config: Optional[dict] = None) -> AuditSession:
         """
         Coordinates a high-concurrency accessibility audit.
         
@@ -105,7 +105,7 @@ class AuditService:
             self.logger.critical(f"CIRCUIT BREAKER ACTIVE: Rejecting mission for {url}.")
             session.fail("Circuit Breaker Tripped.")
             return session
-
+ 
         try:
             # PHASE 1: INITIALIZATION
             if not is_resumed:
@@ -122,8 +122,13 @@ class AuditService:
                 await asyncio.sleep(dynamic_delay)
             
             # PHASE 2: BROWSER ENGINE DEPLOYMENT
-            # Use injected engine if available, otherwise provision local mission engine
-            engine = self.engine if self.engine else PlaywrightEngine(session.id)
+            # Use injected engine if available (and propagate config), otherwise provision local mission engine
+            if self.engine:
+                engine = self.engine
+                if hasattr(engine, 'config'):
+                    setattr(engine, 'config', config or {})
+            else:
+                engine = PlaywrightEngine(session.id, config=config)
             
             if not engine:
                 raise AuditFailedError("Failed to provision browser engine.")
@@ -172,7 +177,7 @@ class AuditService:
                             session_id=session.id, # type: ignore
                             tags=tags,
                             compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
-                            category=ComplianceMapper.get_category(tags),
+                            category=ComplianceMapper.get_category(tags, rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}", agent=agent_type),
                             severity_matrix=ComplianceMapper.get_severity_matrix(impact),
                             url=url
                         )
@@ -250,6 +255,24 @@ class AuditService:
                     cur_session.remediation_plan = self.generate_remediation_plan(cast(List[Violation], violations)) # type: ignore
                 except:
                     pass
+                    
+                # Enrich agent_summary with configuration and emulation metadata
+                if config:
+                    cur_session.agent_summary = cur_session.agent_summary or {}
+                    cur_session.agent_summary["applied_config"] = {
+                        "agent": config.get("agent"),
+                        "viewport": config.get("viewport"),
+                        "dpr": config.get("dpr"),
+                        "network": config.get("network"),
+                        "latency": config.get("latency"),
+                        "reducedMotion": config.get("reducedMotion"),
+                        "colorScheme": config.get("colorScheme"),
+                        "contrast": config.get("contrast"),
+                        "forcedColors": config.get("forcedColors"),
+                        "reducedData": config.get("reducedData"),
+                    }
+                    if hasattr(engine, 'emulation_status'):
+                        cur_session.agent_summary["emulation_status"] = getattr(engine, 'emulation_status')
                     
                 await self.repository.save_session(cur_session)
                 if db_session:

@@ -20,6 +20,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession # type: ignore
 
 # Import models to ensure they are registered with SQLModel.metadata before create_all
 import auditor.infrastructure.persistence_models # type: ignore
+from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel # type: ignore
 import auditor.infrastructure.task_model # type: ignore
 
 # Imports for core logic
@@ -74,13 +75,13 @@ class AuditRequest(BaseModel):
     scan_type: str = "precision"
     use_queue: bool = False
 
-async def async_run_audit_worker(url: str):
+async def async_run_audit_worker(url: str, config: dict = None):
     async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
         service = AuditService(None, repository)
         
         try:
-            session = await service.execute_audit(url)
+            session = await service.execute_audit(url, config=config)
             
             # BRIDGE: Match the robust single_url.py post-processing logic
             if session and session.status.value == "completed":
@@ -119,7 +120,7 @@ async def start_audit(req: AuditRequest, background_tasks: BackgroundTasks):
         async with db_session.begin():
             repository = SqlAlchemyAuditRepository(db_session)
             session = AuditSession(target_url=req.url)
-            session.status = SessionStatus.IN_PROGRESS
+            session.start()
             await repository.save_session(session)
             session_id = str(session.id)
     
@@ -154,12 +155,41 @@ async def get_dashboard_summary():
 
         # Tally Agentic Missions
         agent_counts = {"visual": 0, "motor": 0, "cognitive": 0, "neural": 0}
+        # Tally categories
+        cat_counts = {"color_contrast": 0, "aria_semantics": 0, "keyboard_navigation": 0, "structure": 0}
         for s in recent:
             if hasattr(s, 'agent_summary') and s.agent_summary:
                 agent_counts["visual"] += s.agent_summary.get("visual_count", 0)
                 agent_counts["motor"] += s.agent_summary.get("motor_count", 0)
                 agent_counts["cognitive"] += s.agent_summary.get("cognitive_count", 0)
                 agent_counts["neural"] += s.agent_summary.get("neural_count", 0)
+            if s.violations:
+                from auditor.shared.compliance_mapper import ComplianceMapper
+                for v in s.violations:
+                    cat_name = getattr(v, "category", "") or "General"
+                    if cat_name in ("General", "General Accessibility"):
+                        # Fallback calculation if database has stale record
+                        cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+                        
+                    if "perceivable" in cat_name.lower():
+                        cat_counts["color_contrast"] += 1
+                    elif "operable" in cat_name.lower():
+                        cat_counts["keyboard_navigation"] += 1
+                    elif "understandable" in cat_name.lower():
+                        cat_counts["structure"] += 1
+                    elif "robust" in cat_name.lower():
+                        cat_counts["aria_semantics"] += 1
+                    else:
+                        # Secondary fallback
+                        rule_id_lower = (v.rule_id or "").lower()
+                        if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
+                            cat_counts["color_contrast"] += 1
+                        elif any(x in rule_id_lower for x in ["aria", "role", "label", "agent-cognitive", "agent-neural"]):
+                            cat_counts["aria_semantics"] += 1
+                        elif any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "agent-motor"]):
+                            cat_counts["keyboard_navigation"] += 1
+                        else:
+                            cat_counts["structure"] += 1
 
         # Build recent_scans list with the shape Dashboard.tsx needs
         recent_scans = []
@@ -172,7 +202,7 @@ async def get_dashboard_summary():
                 "url": s.target_url,
                 "score": score,
                 "status": s.status.value,
-                "date": s.started_at.isoformat() if s.started_at else datetime.datetime.now().isoformat(),
+                "date": (s.started_at or s.created_at or datetime.datetime.now()).isoformat(),
             })
 
         # Overall health score across all sessions
@@ -188,6 +218,7 @@ async def get_dashboard_summary():
                 "major": total_major,
                 "minor": total_minor,
             },
+            "categories": cat_counts,
             "recent_scans": recent_scans,
             "network_propagation": "Neo4j Connected" if total_critical >= 0 else "Disconnected",
             "ai_confidence": "97%",
@@ -219,15 +250,31 @@ async def get_audit_violations(audit_id: str):
             severity = impact_val.capitalize()
             
             # Categorization Logic for Insights.tsx
-            rule_id_lower = v.rule_id.lower()
-            if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
+            from auditor.shared.compliance_mapper import ComplianceMapper
+            cat_name = getattr(v, "category", "") or "General"
+            if cat_name in ("General", "General Accessibility"):
+                # Fallback calculation if database has stale record
+                cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+                
+            if "perceivable" in cat_name.lower():
                 category = "Color & Contrast"
-            elif any(x in rule_id_lower for x in ["aria", "role", "label", "agent-cognitive", "agent-neural"]):
-                category = "ARIA & Semantics"
-            elif any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "agent-motor"]):
+            elif "operable" in cat_name.lower():
                 category = "Keyboard Navigation"
-            else:
+            elif "understandable" in cat_name.lower():
                 category = "Structure"
+            elif "robust" in cat_name.lower():
+                category = "ARIA & Semantics"
+            else:
+                # Secondary fallback
+                rule_id_lower = v.rule_id.lower()
+                if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
+                    category = "Color & Contrast"
+                elif any(x in rule_id_lower for x in ["aria", "role", "label", "agent-cognitive", "agent-neural"]):
+                    category = "ARIA & Semantics"
+                elif any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "agent-motor"]):
+                    category = "Keyboard Navigation"
+                else:
+                    category = "Structure"
 
             # Use the first node for selector and html if available
             target_str = v.selector if hasattr(v, 'selector') else "Unknown"
@@ -334,17 +381,252 @@ async def get_history():
             } for s in recent
         ]
 
+class ScanRequest(BaseModel):
+    url: str
+    depth: int = 1
+    standards: list = []
+    agent: str = None
+    strategy: str = None
+    viewport: str = None
+    dpr: str = None
+    network: str = None
+    latency: str = None
+    reducedMotion: bool = False
+    colorScheme: str = None
+    contrast: str = None
+    forcedColors: bool = False
+    reducedData: bool = False
+
+async def async_run_site_audit_worker(url: str, depth: int, config: dict = None):
+    async with AsyncSession(engine) as db_session:
+        # 1. Initialize Infrastructure Components
+        repo = SqlAlchemyAuditRepository(db_session)
+        from auditor.infrastructure.playwright_engine import PlaywrightEngine
+        from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
+        from auditor.domain.crawler import LinkDiscoveryService
+        from auditor.application.audit_service import AuditService
+        from auditor.application.crawl_service import CrawlService
+        
+        browser = PlaywrightEngine(uuid.uuid4(), config=config)
+        crawler = PlaywrightLinkExtractor()
+        
+        # 2. Assemble Service Layer
+        audit_service = AuditService(browser, repo)
+        discovery_service = LinkDiscoveryService(crawler)
+        
+        crawl_orchestrator = CrawlService(
+            audit_service=audit_service,
+            crawler_service=discovery_service,
+            max_depth=depth,
+            max_pages=20,
+            concurrency=3,
+            config=config
+        )
+        
+        # 3. Execution
+        try:
+            await browser.start()
+            await crawl_orchestrator.run(url)
+        except Exception as e:
+            import logging
+            logging.getLogger("auditor.api").exception(f"Background site audit failure [{url}]")
+        finally:
+            if browser:
+                await browser.teardown()
+            if crawler:
+                try: await crawler.teardown()
+                except: pass
+
+@router.post("/scans")
+async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks):
+    if not is_safe_url(req.url):
+        raise HTTPException(status_code=400, detail="Unsafe or invalid URL provided.")
+
+    async with AsyncSession(engine) as db_session:
+        async with db_session.begin():
+            repository = SqlAlchemyAuditRepository(db_session)
+            session = AuditSession(target_url=req.url)
+            session.start()
+            await repository.save_session(session)
+            session_id = str(session.id)
+            
+    config_dict = req.dict()
+    # Run the background task based on depth
+    if req.depth > 1:
+        # Multi-Page Deep Scan
+        background_tasks.add_task(async_run_site_audit_worker, req.url, req.depth, config_dict)
+    else:
+        # Single Page Scan
+        background_tasks.add_task(async_run_audit_worker, req.url, config_dict)
+        
+    return {"id": session_id, "status": "started", "scan_id": session_id}
+
+@router.get("/audits/{audit_id}")
+async def get_audit(audit_id: str):
+    return await get_session(audit_id)
+
+@router.get("/violations/{violation_id}")
+async def get_violation(violation_id: str):
+    try:
+        parsed_id = UUID(violation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid violation ID")
+
+    async with AsyncSession(engine) as db_session:
+        # 1. Attempt lookup by database ID
+        from sqlmodel import select
+        stmt = select(ViolationModel).where(ViolationModel.id == parsed_id)
+        res = await db_session.exec(stmt)
+        v = res.first()
+        
+        # 2. Fallback: Search by stable_id match across all violations
+        if not v:
+            # Let's fetch all violations (since it's a small local DB, this is very fast and safe)
+            all_stmt = select(ViolationModel)
+            all_res = await db_session.exec(all_stmt)
+            all_v = all_res.all()
+            for cand in all_v:
+                session_str = str(cand.session_id)
+                rule_str = cand.rule_id or "generic"
+                selector_str = cand.selector or ""
+                stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
+                if stable_id == violation_id:
+                    v = cand
+                    break
+                    
+        if not v:
+            raise HTTPException(status_code=404, detail="Violation not found")
+
+        # Extract node details
+        current_fragment = "<!-- HTML source snippet -->"
+        occurrences = 1
+        selector = v.selector or "Unknown"
+        if v.nodes:
+            occurrences = len(v.nodes)
+            current_fragment = v.nodes[0].get("html", current_fragment)
+            selector = v.nodes[0].get("target", selector)
+            if isinstance(selector, list):
+                selector = ", ".join(selector)
+
+        # Generate a premium dynamic suggested fix
+        suggested_fix = f"<!-- Suggested remediation for {v.rule_id} -->"
+        rule_lower = (v.rule_id or "").lower()
+        if "color-contrast" in rule_lower:
+            suggested_fix = current_fragment.replace('class="', 'class="high-contrast ').replace('style="', 'style="color: #ffffff; background-color: #000000; ')
+            if "color:" not in suggested_fix:
+                suggested_fix = suggested_fix.replace(">", " style=\"color: #ffffff; background-color: #000000;\">")
+        elif "image-alt" in rule_lower or "alt" in rule_lower:
+            suggested_fix = current_fragment.replace(">", " alt=\"Descriptive alternative text for screen readers\">")
+        elif "label" in rule_lower:
+            suggested_fix = f"<label for=\"input-field\">Associated Input Label</label>\n{current_fragment}"
+        elif "button-name" in rule_lower or "link-name" in rule_lower:
+            suggested_fix = current_fragment.replace("></button>", " aria-label=\"Interactive Action Description\"></button>").replace(">\n</button>", " aria-label=\"Interactive Action Description\">\n</button>")
+        else:
+            suggested_fix = current_fragment.replace(">", " aria-label=\"Accessible component container\">")
+
+        return {
+            "id": violation_id,
+            "rule_id": v.rule_id,
+            "impact": v.impact,
+            "description": v.description,
+            "help_url": v.help_url,
+            "impact_score": 10 if v.impact == "critical" else (5 if v.impact in ("serious", "major") else 2),
+            "occurrences": occurrences,
+            "selector": selector,
+            "current_fragment": current_fragment,
+            "suggested_fix": suggested_fix
+        }
+
+class SettingsUpdate(BaseModel):
+    concurrency: int = None
+    max_depth: int = None
+    timeout: int = None
+    skip_external: bool = None
+    user_agent: str = None
+    ruleset: str = None
+    politeness_delay: int = None
+    ignored_patterns: str = None
+    retry_limit: int = None
+    robots_txt: str = None
+    audit_scope: str = None
+    report_template: str = None
+    ignored_selectors: str = None
+
+import json
+
+SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+def get_persisted_settings():
+    default_settings = {
+        "concurrency": 4,
+        "max_depth": 2,
+        "timeout": 30,
+        "skip_external": True,
+        "user_agent": "default",
+        "ruleset": "wcag21aa",
+        "politeness_delay": 250,
+        "ignored_patterns": ".*\\/logout, .*\\/signout, .*\\.pdf",
+        "retry_limit": 3,
+        "robots_txt": "strict",
+        "audit_scope": "full",
+        "report_template": "cyberpunk",
+        "ignored_selectors": ".ignore-a11y, #chat-widget-container"
+    }
+    if not os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "w") as f:
+                json.dump(default_settings, f, indent=4)
+        except Exception:
+            pass
+        return default_settings
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            data = json.load(f)
+            # Ensure all default keys exist
+            for k, v in default_settings.items():
+                if k not in data:
+                    data[k] = v
+            return data
+    except Exception:
+        return default_settings
+
+def save_persisted_settings(new_settings: dict):
+    current = get_persisted_settings()
+    for k, v in new_settings.items():
+        if v is not None:
+            current[k] = v
+    try:
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(current, f, indent=4)
+    except Exception:
+        pass
+
+@router.patch("/user/settings")
+async def update_settings(settings: SettingsUpdate):
+    save_persisted_settings(settings.dict())
+    return {"status": "success", "message": "Settings updated"}
+
 @router.get("/user/profile")
 async def get_profile():
+    settings_data = get_persisted_settings()
     return {
         "name": "Sentinel Admin",
         "email": "admin@sentinel.local",
-        "role": "Auditor"
+        "role": "Auditor",
+        "settings": settings_data
     }
 
 @router.get("/user/export-logs")
 async def export_logs():
-    return "Log export content..."
+    log_path = os.path.join(PROJECT_ROOT, "reports", "logs", "auditor.log")
+    if os.path.exists(log_path):
+        return FileResponse(
+            path=log_path,
+            filename="auditor.log",
+            media_type="text/plain"
+        )
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("No logs recorded yet.", status_code=200)
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
@@ -361,15 +643,21 @@ async def get_session(session_id: str):
             
         violations_data = await get_audit_violations(session_id)
         
+        crit = sum(1 for v in violations_data if v.get("impact") == "critical")
+        score = max(0, round(100 - (crit * 10) - (len(violations_data) * 0.5)))
+        
         return {
             "id": session_id,
             "url": session.target_url,
             "target_url": session.target_url, # Alias for frontend pages expecting target_url
             "status": session.status.value,
+            "score": score,
+            "date": session.started_at.isoformat() if session.started_at else datetime.datetime.now().isoformat(),
             "completed_at": session.updated_at.isoformat() if session.updated_at else None,
             "violations": violations_data,
             "remediation_plan": session.remediation_plan,
-            "agent_summary": session.agent_summary
+            "agent_summary": session.agent_summary,
+            "error_message": session.error_message
         }
 
 @router.get("/reports/{session_id}/download")

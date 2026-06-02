@@ -153,7 +153,53 @@ class AuditReporter:
 
     def _build_html_dashboard(self, data: Dict[str, Any]) -> str:
         """Constructs a premium HTML dashboard using HSL palettes and Inter typography."""
-        
+        # Load settings dynamically
+        import json
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        template = settings.get("report_template", "cyberpunk")
+
+        # Map template styles
+        self.bg_color = "#0a0a0c"
+        self.card_bg = "#141418"
+        self.text_main = "#f0f0f5"
+        self.text_dim = "#a1a1aa"
+        self.accent = "#6366f1"
+        self.border = "#27272a"
+        self.font_family = "'Inter', sans-serif"
+        self.body_padding = "40px 20px"
+
+        if template == "minimal":
+            self.bg_color = "#fafafa"
+            self.card_bg = "#ffffff"
+            self.text_main = "#18181b"
+            self.text_dim = "#71717a"
+            self.accent = "#09090b"
+            self.border = "#e4e4e7"
+        elif template == "cyberpunk":
+            self.bg_color = "#020205"
+            self.card_bg = "#0c0817"
+            self.text_main = "#00f0ff"
+            self.text_dim = "#ff007f"
+            self.accent = "#ff007f"
+            self.border = "#3d0c5a"
+            self.font_family = "'JetBrains Mono', monospace"
+        elif template == "executive":
+            self.bg_color = "#0f172a"
+            self.card_bg = "#1e293b"
+            self.text_main = "#f8fafc"
+            self.text_dim = "#94a3b8"
+            self.accent = "#38bdf8"
+            self.border = "#334155"
+            self.font_family = "Georgia, serif"
+
         impact_counts = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
         for v in data["violations"]:
             impact = (v.get("impact") or "minor").lower()
@@ -262,25 +308,25 @@ class AuditReporter:
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-color: #0a0a0c;
-            --card-bg: #141418;
-            --text-main: #f0f0f5;
-            --text-dim: #a1a1aa;
-            --accent-primary: #6366f1;
+            --bg-color: {self.bg_color};
+            --card-bg: {self.card_bg};
+            --text-main: {self.text_main};
+            --text-dim: {self.text_dim};
+            --accent-primary: {self.accent};
             --impact-critical: #ef4444;
             --impact-serious: #f97316;
             --impact-moderate: #eab308;
             --impact-minor: #22c55e;
-            --border-color: #27272a;
+            --border-color: {self.border};
         }}
 
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             background-color: var(--bg-color);
             color: var(--text-main);
-            font-family: 'Inter', sans-serif;
+            font-family: {self.font_family};
             line-height: 1.6;
-            padding: 40px 20px;
+            padding: {self.body_padding};
         }}
 
         .container {{ max-width: 1100px; margin: 0 auto; }}

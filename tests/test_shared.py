@@ -34,18 +34,30 @@ def test_compliance_mapper_categories():
     # Perceivable
     cat = ComplianceMapper.get_category(["cat.color"])
     assert cat == "Perceivable"
+    cat_sem = ComplianceMapper.get_category(["cat.semantics"])
+    assert cat_sem == "Perceivable"
     
     # Operable
     cat = ComplianceMapper.get_category(["cat.keyboard"])
     assert cat == "Operable"
+    cat_title = ComplianceMapper.get_category(["CAT.TITLE"])
+    assert cat_title == "Operable"
     
     # Understandable
     cat = ComplianceMapper.get_category(["cat.forms"])
     assert cat == "Understandable"
+    cat_lang = ComplianceMapper.get_category(["cat.language"])
+    assert cat_lang == "Understandable"
     
     # Robust
     cat = ComplianceMapper.get_category(["cat.aria"])
     assert cat == "Robust"
+    cat_nrv = ComplianceMapper.get_category(["cat.name-role-value"])
+    assert cat_nrv == "Robust"
+    
+    # Rule ID matching fallback
+    cat_rule = ComplianceMapper.get_category([], rule_id="duplicate-id-active")
+    assert cat_rule == "Robust"
     
     # General
     cat = ComplianceMapper.get_category(["other"])
@@ -70,3 +82,17 @@ def test_compliance_mapper_enhance_violation_invalid_impact():
     assert enhanced["compliance_level"] == "A"
     assert enhanced["category"] == "Robust"
     assert "Best Practice" in enhanced["severity_matrix"]
+
+def test_stealth_profile_generator():
+    from auditor.shared.stealth_profiles import StealthProfileGenerator
+    profiles = StealthProfileGenerator.get_all_profiles()
+    assert len(profiles) == 4
+    
+    # Random profile validation
+    rand_profile = StealthProfileGenerator.get_random_profile()
+    assert "name" in rand_profile
+    assert "userAgent" in rand_profile
+    assert "viewport" in rand_profile
+    assert "width" in rand_profile["viewport"]
+    assert "height" in rand_profile["viewport"]
+

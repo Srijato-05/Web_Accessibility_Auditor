@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "test": "npm --prefix frontend run test",
+    "test:watch": "npx --prefix frontend vitest",
+    "test:coverage": "npx --prefix frontend vitest run --coverage"
+  }
+}

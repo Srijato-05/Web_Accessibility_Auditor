@@ -209,7 +209,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
                     completed_at=m.completed_at,
                     error_message=m.error_message,
                     focus_path=m.focus_path,
-                    aria_events=m.aria_events
+                    aria_events=m.aria_events,
+                    agent_summary=m.agent_summary or {},
+                    remediation_plan=m.remediation_plan or ""
                 )
                 session.violations = [
                     Violation(

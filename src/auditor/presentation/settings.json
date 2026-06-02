@@ -1,0 +1,15 @@
+{
+    "concurrency": 4,
+    "max_depth": 2,
+    "timeout": 30,
+    "skip_external": true,
+    "user_agent": "default",
+    "ruleset": "wcag21aa",
+    "politeness_delay": 250,
+    "ignored_patterns": ".*\\/logout, .*\\/signout, .*\\.pdf",
+    "retry_limit": 3,
+    "robots_txt": "strict",
+    "audit_scope": "full",
+    "report_template": "cyberpunk",
+    "ignored_selectors": ".ignore-a11y, #chat-widget-container"
+}

@@ -7,22 +7,22 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#050507',
-        surface: '#121217',
+        background: 'var(--bg-deep)',
+        surface: 'var(--bg-surface)',
         'surface-highlight': 'rgba(255, 255, 255, 0.05)',
-        'surface-border': 'rgba(255, 255, 255, 0.1)',
-        'on-surface': '#e0e0e6',
-        'on-surface-variant': '#9494a3',
-        primary: '#00f2ff',
-        'primary-hover': '#00d0db',
-        'on-primary': '#050507',
-        secondary: '#7000ff',
-        'secondary-hover': '#5d00d6',
-        error: '#ff007a',
-        'error-bg': 'rgba(255, 0, 122, 0.1)',
-        warning: '#f0b429',
-        'warning-bg': 'rgba(240, 180, 41, 0.1)',
-        accent: '#ff007a'
+        'surface-border': 'var(--border-glass)',
+        'on-surface': 'var(--text-main)',
+        'on-surface-variant': 'var(--text-dim)',
+        primary: 'var(--primary)',
+        'primary-hover': 'var(--primary)',
+        'on-primary': 'var(--bg-deep)',
+        secondary: 'var(--secondary)',
+        'secondary-hover': 'var(--secondary)',
+        error: 'var(--error)',
+        'error-bg': 'var(--error-bg)',
+        warning: 'var(--warning)',
+        'warning-bg': 'var(--warning-bg)',
+        accent: 'var(--accent)'
       },
       fontFamily: {
         heading: ['Orbitron', 'sans-serif'],

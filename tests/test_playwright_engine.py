@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, ANY
 from uuid import uuid4
 from auditor.infrastructure.playwright_engine import PlaywrightEngine
 from auditor.domain.exceptions import EngineError, AuditFailedError
@@ -395,6 +395,107 @@ async def test_playwright_engine_proprietary_heuristics():
     mock_page_fail = AsyncMock()
     mock_page_fail.evaluate = AsyncMock(side_effect=Exception("eval error"))
     assert await engine._find_all_render_contexts(mock_page_fail) == [("document", "document")]
+
+
+@pytest.mark.asyncio
+async def test_playwright_engine_emulations_and_boundary_checks():
+    session_id = uuid4()
+    
+    # 1. Test Valid config
+    valid_config = {
+        "viewport": "1024x768",
+        "dpr": "2.0",
+        "agent": "colorblind_deuteranopia",
+        "network": "slow_3g",
+        "latency": "100",
+        "reducedMotion": True,
+        "colorScheme": "dark",
+        "contrast": "high",
+        "forcedColors": True,
+        "reducedData": True
+    }
+    
+    engine = PlaywrightEngine(session_id, config=valid_config)
+    
+    # Verify parsing in constructor / init
+    mock_pw = AsyncMock()
+    mock_browser = AsyncMock()
+    mock_context = AsyncMock()
+    mock_page = AsyncMock()
+    
+    mock_pw.chromium.launch.return_value = mock_browser
+    mock_browser.new_context.return_value = mock_context
+    mock_context.new_page.return_value = mock_page
+    
+    await engine._init_browser(mock_pw)
+    
+    # Assert parsed properties
+    assert engine.profile["viewport"] == {"width": 1024, "height": 768}
+    assert engine.profile["deviceScaleFactor"] == 2.0
+    assert engine.emulation_status["viewport_applied"] is True
+    assert engine.emulation_status["dpr_applied"] is True
+    
+    # 2. Test Out of Bounds / Parsing Failure config
+    invalid_config = {
+        "viewport": "50x50", # Too small
+        "dpr": "5.0", # Too large
+        "latency": "30000" # Too large
+    }
+    
+    engine_invalid = PlaywrightEngine(session_id, config=invalid_config)
+    await engine_invalid._init_browser(mock_pw)
+    
+    # Should fall back to defaults
+    assert engine_invalid.profile["viewport"] == {"width": 1920, "height": 1080}
+    assert engine_invalid.profile["deviceScaleFactor"] == 1.0
+    assert any("out of bounds" in err for err in engine_invalid.emulation_status["errors"])
+
+    # 3. Test Emulations setup inside scan_url
+    engine.browser = mock_browser
+    engine.context = mock_context
+    mock_page.is_closed = MagicMock(return_value=False)
+    mock_page.context = mock_context
+    
+    # Mock CDP session
+    mock_cdp = AsyncMock()
+    mock_context.new_cdp_session.return_value = mock_cdp
+    
+    with patch.object(engine, "_get_dynamic_timeout", AsyncMock(return_value=5000)), \
+         patch.object(engine, "_stabilize_dom", AsyncMock()), \
+         patch.object(engine, "_run_proprietary_heuristics", AsyncMock(return_value=[])), \
+         patch("axe_playwright_python.async_playwright.Axe.run", AsyncMock(return_value=MagicMock(violations=[]))), \
+         patch("auditor.infrastructure.playwright_engine.extract_page_data", AsyncMock(return_value=MagicMock())):
+         
+        await engine.scan_url("https://example.com")
+        
+        # Verify emulate_vision_deficiency was called with deuteranopia
+        mock_page.emulate_vision_deficiency.assert_called_with("deuteranopia")
+        assert engine.emulation_status["vision_deficiency_applied"] is True
+        
+        # Verify Network Emulation call
+        mock_context.new_cdp_session.assert_called_once_with(mock_page)
+        mock_cdp.send.assert_any_call("Network.emulateNetworkConditions", {
+            "offline": False,
+            "latency": 100,
+            "downloadThroughput": 400 * 1024,
+            "uploadThroughput": 400 * 1024
+        })
+        assert engine.emulation_status["network_throttling_applied"] is True
+        
+        # Verify emulate_media called with correct preferences
+        mock_page.emulate_media.assert_called_once()
+        media_features_arg = mock_page.emulate_media.call_args[1]["media_features"]
+        assert {"name": "prefers-reduced-motion", "value": "reduce"} in media_features_arg
+        assert {"name": "prefers-color-scheme", "value": "dark"} in media_features_arg
+        assert {"name": "prefers-contrast", "value": "high"} in media_features_arg
+        assert {"name": "forced-colors", "value": "active"} in media_features_arg
+        assert {"name": "prefers-reduced-data", "value": "reduce"} in media_features_arg
+        assert engine.emulation_status["media_applied"] is True
+        
+        # Verify page.route was registered for asset blocking
+        mock_page.route.assert_called_once_with("**/*", ANY)
+        assert engine.emulation_status["reduced_data_applied"] is True
+
 
 
 

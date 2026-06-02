@@ -1,84 +1,96 @@
 import { useEffect, useState } from 'react';
-import { client } from '../api/client';
-import { Target, Bug, FileCode2, ArrowLeft } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { client } from '../api/client.ts';
+import { Loader2, Activity, ShieldAlert } from 'lucide-react';
 
 export default function AuditReport() {
-  const [session, setSession] = useState<any>(null);
-
-  // Hardcode ID from mock data for prototyping
-  const sessionId = "12345678-1234-5678-1234-567812345678";
+  const { audit_id } = useParams();
+  const navigate = useNavigate();
+  const [status, setStatus] = useState('initializing');
+  const [url, setUrl] = useState('');
+  const [logs, setLogs] = useState<string[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    client.get(`/sessions/${sessionId}`)
-      .then(res => setSession(res.data))
-      .catch(console.error);
-  }, []);
+    let interval: any;
+    
+    const checkStatus = () => {
+      client.get(`/audits/${audit_id}`)
+        .then(res => {
+          setUrl(res.data.url);
+          if (res.data.status === 'completed') {
+            setStatus('completed');
+            clearInterval(interval);
+            navigate(`/insights/${audit_id}`);
+          } else if (res.data.status === 'failed') {
+            setStatus('error');
+            setErrorMsg(res.data.error_message || 'The scan failed due to a browser execution anomaly.');
+            clearInterval(interval);
+          } else {
+            setStatus('scanning');
+            // Mock scanner tracking updates to simulate real-time CLI output
+            const mockLogs = [
+              `[SYSTEM] Connecting to target ${res.data.url}`,
+              `[CRAWLER] Traversing depth limits...`,
+              `[AUDITOR] Executing Axe-Core heuristics rules...`,
+              `[DATABASE] Writing subgraphs index nodes...`
+            ];
+            setLogs(mockLogs);
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          setStatus('error');
+          clearInterval(interval);
+        });
+    };
 
-  if (!session) return <div className="p-8 text-on-surface-variant">Decrypting session data...</div>;
+    checkStatus();
+    interval = setInterval(checkStatus, 3000);
+
+    return () => clearInterval(interval);
+  }, [audit_id, navigate]);
 
   return (
-    <div className="min-h-screen bg-surface-dim p-8">
-      {/* Header */}
-      <div className="mb-8">
-        <button className="secondary-btn flex items-center gap-2 mb-6">
-          <ArrowLeft size={16} /> Return to Mission Control
-        </button>
-        <h1 className="text-4xl font-heading tracking-tight mb-2 flex items-center gap-3">
-          <Target className="text-primary" /> {session.target_url}
-        </h1>
-        <p className="text-outline uppercase text-xs tracking-widest font-bold">
-           Session {session.id} • Completed {new Date(session.completed_at).toLocaleString()}
-        </p>
-      </div>
+    <div className="max-w-4xl mx-auto px-6 py-20 pb-32 flex flex-col justify-center min-h-screen">
+      <div className="glass-panel p-10 relative overflow-hidden border-t-4 border-t-primary">
+         {/* Futuristic Scanning animation bar */}
+         <div className="scan-line"></div>
 
-      <div className="grid grid-cols-12 gap-8">
-        {/* Core Content */}
-        <section className="col-span-12 lg:col-span-8 flex flex-col gap-4">
-           {session.violations.map((violation: any, idx: number) => (
-             <div key={idx} className="bg-surface-container rounded-md ghost-border relative overflow-hidden">
-                {/* Decorative border matching severity */}
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-error"></div>
-                
-                <div className="p-6 pl-8">
-                  <div className="flex justify-between items-start mb-4">
-                    <h3 className="font-heading text-xl text-on-surface tracking-tight mb-1">{violation.description}</h3>
-                    <div className="bg-error-container/30 text-error px-3 py-1 rounded-full text-xs font-bold uppercase ring-1 ring-error/20 flex items-center gap-1">
-                      <Bug size={14} /> {violation.impact}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-surface-container-highest p-4 rounded text-sm text-outline-variant font-mono mb-4 ring-1 ring-white/5">
-                    <div className="flex items-center gap-2 mb-2 text-on-surface-variant font-body text-xs font-bold uppercase tracking-wide">
-                      <FileCode2 size={16}/> Dom Selector
-                    </div>
-                    {violation.selector}
-                  </div>
+         <div className="flex items-center gap-3 mb-6">
+            <div className="bg-primary/10 text-primary p-2.5 rounded-md border border-primary/20 animate-pulse">
+               <Activity size={24} />
+            </div>
+            <div>
+               <h1 className="text-2xl font-heading font-bold text-on-surface">Compliance Scanning Console</h1>
+               <span className="text-[10px] uppercase font-mono tracking-widest text-primary font-bold">Scanning Vector: {url}</span>
+            </div>
+         </div>
 
-                  <a href={violation.help_url} target="_blank" className="text-primary hover:text-primary-fixed hover:underline text-sm font-medium">
-                    View Deque Documentation
-                  </a>
-                </div>
-             </div>
-           ))}
-        </section>
+         {status === 'error' ? (
+            <div className="p-4 bg-error/15 border border-error/30 text-error rounded text-xs flex items-center gap-2 mb-6" role="alert">
+               <ShieldAlert size={16} /> {errorMsg || 'Error traversing target node list. Ensure target server is responsive.'}
+            </div>
+         ) : (
+            <div className="flex items-center gap-3 text-xs text-on-surface mb-8 bg-surface-highlight/50 p-4 rounded border border-surface-border">
+               <Loader2 className="animate-spin text-primary shrink-0" size={16} />
+               <span>Executing deep accessibility heuristics... Please do not terminate secure connection session.</span>
+            </div>
+         )}
 
-        {/* Sidebar Info */}
-        <section className="col-span-12 lg:col-span-4">
-           <div className="glass-panel p-6 shadow-ambient">
-             <h2 className="text-xl font-heading mb-4 text-on-surface">Forensic Metatdata</h2>
-             <ul className="text-sm space-y-3 text-on-surface-variant">
-               <li className="flex justify-between border-b border-outline-variant/15 pb-2">
-                 <span>Status</span> <span className="text-secondary font-bold uppercase">{session.status}</span>
-               </li>
-               <li className="flex justify-between border-b border-outline-variant/15 pb-2">
-                 <span>Violations</span> <span className="text-error font-bold">{session.violations.length} Criticals</span>
-               </li>
-               <li className="flex justify-between border-b border-outline-variant/15 pb-2">
-                 <span>Target Matrix</span> <span>WCAG 2.1 AA</span>
-               </li>
-             </ul>
-           </div>
-        </section>
+         {/* Console Logs Deck */}
+         <div className="bg-black/80 rounded border border-surface-border p-5 text-xs text-on-surface-variant font-mono space-y-2 max-h-60 overflow-y-auto">
+            {logs.map((log, idx) => (
+               <div key={idx} className="flex gap-2">
+                  <span className="text-primary font-bold">{`>`}</span>
+                  <span className="text-on-surface-variant select-all">{log}</span>
+               </div>
+            ))}
+            <div className="flex gap-2 text-primary animate-pulse">
+               <span>{`>`}</span>
+               <span>Awaiting pipeline feedback logs...</span>
+            </div>
+         </div>
       </div>
     </div>
   );

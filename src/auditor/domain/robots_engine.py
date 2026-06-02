@@ -79,6 +79,21 @@ class RobotsAdherenceEngine:
 
     def is_allowed(self, url: str) -> bool:
         """Determines if the Auditor is permitted to audit the given URL."""
+        # Load settings dynamically to get the current robots_txt policy
+        import json
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        robots_policy = settings.get("robots_txt", "strict")
+        if robots_policy == "ignore":
+            return True
+
         if not self._is_ready: 
             return True
         

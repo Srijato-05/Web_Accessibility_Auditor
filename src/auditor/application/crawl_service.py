@@ -42,16 +42,38 @@ class CrawlService:
         self,
         audit_service: AuditService,
         crawler_service: LinkDiscoveryService,
-        max_depth: int = 2,
-        max_pages: int = 100,
-        concurrency: int = 5
+        max_depth: int = None,
+        max_pages: int = None,
+        concurrency: int = None,
+        config: dict = None
     ):
         self.audit_service = audit_service
         self.crawler_service = crawler_service
-        self.max_depth = max_depth
-        self.max_pages = max_pages
-        self.concurrency = concurrency
-        self._semaphore = asyncio.Semaphore(concurrency)
+        self.config = config or {}
+
+        # Load settings dynamically
+        import json
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        strategy = self.config.get("strategy", "fast")
+        if strategy == "fast":
+            self.concurrency = concurrency if concurrency is not None else 6
+            self.politeness_delay = 0
+        else:
+            self.concurrency = 1
+            self.politeness_delay = 1000
+
+        self.max_depth = max_depth if max_depth is not None else settings.get("max_depth", 2)
+        self.max_pages = max_pages if max_pages is not None else 100
+        self.skip_external = settings.get("skip_external", True)
+        self._semaphore = asyncio.Semaphore(self.concurrency)
         
         self.visited_urls: Set[str] = set()
         self.discovered_count = 0
@@ -179,11 +201,27 @@ class CrawlService:
     async def _process_audit_session(self, url: str, depth: int, queue: asyncio.PriorityQueue):
         """Coordinates a single-page audit and recursive link extraction."""
         async with self._semaphore:
+            # Load settings dynamically to get the current politeness delay
+            import json
+            settings = {}
+            try:
+                settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+                if os.path.exists(settings_path):
+                    with open(settings_path, "r") as f:
+                        settings = json.load(f)
+            except Exception:
+                pass
+
+            politeness_delay = self.politeness_delay if hasattr(self, 'politeness_delay') else settings.get("politeness_delay", 250)
+            if politeness_delay > 0:
+                self.logger.info(f"Applying politeness delay: sleeping {politeness_delay}ms...")
+                await asyncio.sleep(politeness_delay / 1000.0)
+
             self.logger.info(f"[{self.discovered_count}/{self.max_pages}] Audit Process Active: {url}")
             
             try:
                 # 1. SCANNING PHASE
-                session = await self.audit_service.execute_audit(url)
+                session = await self.audit_service.execute_audit(url, config=self.config)
                 self.success_count += 1
                 
                 # 2. DISCOVERY PHASE (Only if within session bounds)
@@ -236,18 +274,48 @@ class CrawlService:
 
     def _is_internal(self, start_url: str, target_url: str) -> bool:
         """Determines if a target is within the audit domain boundary."""
+        if not self.skip_external:
+            return True
         start_netloc = urlparse(start_url).netloc
         target_netloc = urlparse(target_url).netloc
         return start_netloc == target_netloc
 
     def _is_asset_filtered(self, url: str) -> bool:
-        """Heuristically filters out static assets to optimize processing."""
+        """Heuristically filters out static assets and ignored patterns to optimize processing."""
+        # 1. Standard Asset Extensions
         asset_extensions = [
             ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
             ".pdf", ".css", ".js", ".woff", ".woff2", ".ttf", ".otf",
             ".mp4", ".wav", ".mp3", ".zip", ".tar", ".gz"
         ]
-        return any(url.lower().endswith(ext) for ext in asset_extensions)
+        if any(url.lower().endswith(ext) for ext in asset_extensions):
+            return True
+
+        # 2. Ignored URL Regex Patterns from settings.json
+        import json
+        import re
+        settings = {}
+        try:
+            settings_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "presentation", "settings.json"))
+            if os.path.exists(settings_path):
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+        except Exception:
+            pass
+
+        ignored_patterns_str = settings.get("ignored_patterns", "")
+        if ignored_patterns_str:
+            for pattern in ignored_patterns_str.split(","):
+                pattern_stripped = pattern.strip()
+                if pattern_stripped:
+                    try:
+                        if re.match(pattern_stripped, url):
+                            self.logger.info(f"Skipping url '{url}' because it matches ignored pattern '{pattern_stripped}'")
+                            return True
+                    except Exception:
+                        pass
+        
+        return False
 
 # --- [ MASSIVE EXPANSION Logic Continued ] ---
 # (To reach 750 lines, we would implement 300+ lines of specialized 

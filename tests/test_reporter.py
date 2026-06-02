@@ -87,11 +87,25 @@ async def test_generate_summary_report_success(temp_db_engine):
             severity_matrix="Unclassified",
             url="https://report-test.com/robust"
         )
+        v5 = ViolationModel(
+            id=uuid.uuid4(),
+            session_id=session_id,
+            rule_id="general-check",
+            impact="minor",
+            description="General failure",
+            selector="p",
+            help_url="http://help5.com",
+            compliance_level="A",
+            category="General Accessibility",
+            severity_matrix="Low",
+            url="https://report-test.com/general"
+        )
         session.add(s_model)
         session.add(v1)
         session.add(v2)
         session.add(v3)
         session.add(v4)
+        session.add(v5)
         await session.commit()
 
     # 2. Run reporter specifying the session_id as string
@@ -108,11 +122,12 @@ async def test_generate_summary_report_success(temp_db_engine):
             with open(report_paths["json"], "r") as f:
                 data = json.load(f)
                 assert data["session_id"] == str(session_id)
-                assert data["total_violations"] == 4
+                assert data["total_violations"] == 5
                 assert data["matrix"]["axe"]["Perceivable"] == 1
                 assert data["matrix"]["axe"]["Operable"] == 1
                 assert data["matrix"]["axe"]["Understandable"] == 1
                 assert data["matrix"]["axe"]["Robust"] == 1
+                assert data["matrix"]["axe"]["General"] == 1
             
             with open(report_paths["html"], "r") as f:
                 html = f.read()
@@ -120,6 +135,7 @@ async def test_generate_summary_report_success(temp_db_engine):
                 assert "Skipped heading" in html
                 assert "Visual Focus Path" in html
                 assert "Dynamic ARIA-Live Log" in html
+                assert "General" in html
                 
             mock_pdf.assert_called_once()
 
