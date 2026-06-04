@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { client } from '../api/client.ts';
-import { ArrowLeft, Network, AlertTriangle, Layers, Combine, Zap, ShieldCheck, Loader2, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Network, Zap, ShieldCheck, Loader2, CheckCircle } from 'lucide-react';
 
 interface GraphData {
   impact_probability: string;
