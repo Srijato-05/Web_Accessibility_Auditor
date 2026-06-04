@@ -31,6 +31,7 @@ class Neo4jRepository:
         self.uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self.user = os.getenv("NEO4J_USER", "neo4j")
         self.password = os.getenv("NEO4J_PASSWORD")
+        self.database = os.getenv("NEO4J_DATABASE", "neo4j")
 
         if not GraphDatabase:
             self.logger.warning("Neo4j library not installed. Repository running offline.")
@@ -87,7 +88,7 @@ class Neo4jRepository:
         if not self.driver:
             return
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 query = """
                 MERGE (d:Domain {url: $domain_url})
                 MERGE (s:Page {url: $source_url})
@@ -137,7 +138,7 @@ class Neo4jRepository:
                 else str(violation.impact)
             )
 
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 query = """
                 MERGE (p:Page {url: $page_url})
                 MERGE (c:Component {id: $footprint})
@@ -167,7 +168,7 @@ class Neo4jRepository:
         if not self.driver:
             return {"nodes": [], "links": []}
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 query = """
                 MATCH (n)
                 OPTIONAL MATCH (n)-[r]->(m)
@@ -262,7 +263,7 @@ class Neo4jRepository:
               "specific_fix": "None"
             }
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 counts_query = """
                 OPTIONAL MATCH (p:Page) WITH count(p) as page_count
                 OPTIONAL MATCH (c:Component) WITH page_count, count(c) as component_count
@@ -343,7 +344,7 @@ class Neo4jRepository:
         if not self.driver:
             return
         try:
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 query = """
                 UNWIND $batch AS item
                 MERGE (d:Domain {url: item.domain_url})
@@ -402,7 +403,7 @@ class Neo4jRepository:
                     "standard_id": standard_id
                 })
 
-            with self.driver.session() as session:
+            with self.driver.session(database=self.database) as session:
                 query = """
                 UNWIND $batch AS item
                 MERGE (p:Page {url: item.page_url})
