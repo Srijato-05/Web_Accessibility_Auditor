@@ -138,47 +138,58 @@ class ComplianceMapper:
 
     @classmethod
     def get_category(cls, tags: List[str], rule_id: str = "", agent: str = "") -> str:
-        """Maps axe-core categories to WCAG principles (POUR) dynamically using configuration mappings."""
+        """Maps axe-core categories to WCAG principles (POUR) dynamically using high-fidelity regex parsing."""
+        import re
+        
+        # Compile compilation-cached regexes once on the class for high efficiency
+        if not hasattr(cls, "_conformance_pat"):
+            cls._conformance_pat = re.compile(r'^wcag\d*[a]+$')
+            cls._dotted_pat = re.compile(r'\b([1-4])\.\d+(?:\.\d+)*\b')
+            cls._wcag_digits_pat = re.compile(r'^wcag([1-4])(\d{2,3})$')
+
         tags_lower = [str(t).lower() for t in tags]
         rule_id_lower = str(rule_id).lower()
         agent_lower = str(agent).lower()
 
-        # 1. Check custom heuristic rules specifically
+        # 1. Custom heuristic rules check (highest specificity)
         for pattern, principle in cls.HEURISTIC_RULES.items():
             if pattern in rule_id_lower:
                 return principle
 
-        # 2. Axe Category Prefixes exact match fallback (higher precedence than substring match)
+        # 2. Dynamic WCAG Success Criteria tag parsing
+        for t in tags_lower:
+            # Skip conformance levels (e.g. wcag2a, wcag22aa) which don't map to a single principle
+            if cls._conformance_pat.match(t):
+                continue
+            
+            # Check for dotted patterns like "1.4.3" or "wcag-2.5.5"
+            dotted_match = cls._dotted_pat.search(t)
+            if dotted_match:
+                first_digit = dotted_match.group(1)
+                return cls.WCAG_PRINCIPLES[first_digit]
+
+            # Check for standard non-dotted patterns like "wcag143" or "wcag332"
+            digits_match = cls._wcag_digits_pat.match(t)
+            if digits_match:
+                first_digit = digits_match.group(1)
+                return cls.WCAG_PRINCIPLES[first_digit]
+
+        # 3. Axe Category Prefixes exact match (e.g. cat.color)
         for principle, categories in cls.AXE_CATEGORIES.items():
             if any(cat in tags_lower for cat in categories):
                 return principle
 
-        # 3. Check WCAG numbers in tags (e.g. wcag143 -> 1.4.3 -> Perceivable, or 2.5.5 -> Operable)
-        for t in tags_lower:
-            if t in ["wcag2a", "wcag2aa", "wcag2aaa", "wcag21a", "wcag21aa", "wcag21aaa", "wcag22a", "wcag22aa", "wcag22aaa"]:
-                continue
-            
-            # Extract clean criterion representation (remove wcag prefix)
-            clean_tag = t.replace("wcag", "").replace("-", "").strip()
-            if clean_tag and clean_tag[0].isdigit():
-                # Filter to only numbers and dots
-                clean_tag_digits = "".join(c for c in clean_tag if c.isdigit() or c == ".")
-                if clean_tag_digits:
-                    first_digit = clean_tag_digits[0]
-                    if first_digit in cls.WCAG_PRINCIPLES:
-                        return cls.WCAG_PRINCIPLES[first_digit]
-
-        # 4. Check tags for key indicators based on substrings
+        # 4. Check tags substrings for key indicators
         for principle, substrings in cls.RULE_SUBSTRINGS.items():
             if any(sub in t for t in tags_lower for sub in substrings):
                 return principle
 
-        # 5. Check Rule ID substrings
+        # 5. Check Rule ID substrings for key indicators
         for principle, substrings in cls.RULE_SUBSTRINGS.items():
             if any(sub in rule_id_lower for sub in substrings):
                 return principle
 
-        # 6. Fallback to Agent Type name if nothing else classified the issue
+        # 6. Fallback to default principle for custom Agent types
         if agent_lower in cls.AGENT_CATEGORIES:
             return cls.AGENT_CATEGORIES[agent_lower]
             

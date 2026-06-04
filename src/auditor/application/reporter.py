@@ -72,7 +72,7 @@ class AuditReporter:
             
             # Category & Compliance Level dynamic recalculation for report consistency
             from auditor.shared.compliance_mapper import ComplianceMapper
-            cat_name = v.category if (hasattr(v, 'category') and v.category) else ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+            cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
             comp_level = ComplianceMapper.get_compliance_level(v.tags or [], v.impact)
                 
             # Nodes
@@ -587,6 +587,10 @@ class AuditReporter:
             <div class="summary-card">
                 <span class="value" style="color: var(--accent-primary)">{len([v for v in data['violations'] if v['compliance_level'] == 'AA'])}</span>
                 <span class="label">Level AA Risks</span>
+            </div>
+            <div class="summary-card">
+                <span class="value" style="color: var(--text-dim)">{len([v for v in data['violations'] if v['compliance_level'] == 'AAA'])}</span>
+                <span class="label">Level AAA Risks</span>
             </div>
         </div>
         

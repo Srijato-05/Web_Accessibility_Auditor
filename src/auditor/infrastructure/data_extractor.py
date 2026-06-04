@@ -190,6 +190,10 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
                 ariaInvalid: el.getAttribute('aria-invalid') || '',
                 ariaRequired: el.getAttribute('aria-required') || '',
                 ariaDescribedby: el.getAttribute('aria-describedby') || '',
+                ariaLabel: el.getAttribute('aria-label') || '',
+                ariaLabelledby: el.getAttribute('aria-labelledby') || '',
+                placeholder: el.getAttribute('placeholder') || '',
+                title: el.getAttribute('title') || '',
                 className: el.className && typeof el.className === 'string' ? el.className : '',
                 tabindex: el.getAttribute('tabindex') || ''
             },

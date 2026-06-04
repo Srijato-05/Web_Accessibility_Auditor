@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Dict, Any
+from html import escape as html_escape
 
 # IDE PATH RECONCILIATION: Ensure internal module resolution
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -241,12 +242,10 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                     <h3>Total Finds</h3>
                     <p class="number">{total_findings}</p>
                 </div>
-                {f'''
                 <div class="card" style="background: #edf2f7; border-color: #cbd5e0;">
                     <h3 style="color: #4a5568;">Standard (Axe)</h3>
                     <p class="number" style="color: #2d3748;">{by_agent.get('axe', 0) + by_agent.get('unknown', 0)}</p>
                 </div>
-                ''' if by_agent.get('axe', 0) > 0 or by_agent.get('unknown', 0) > 0 else ''}
                 <div class="card">
                     <h3>Visual</h3>
                     <p class="number">{by_agent.get('visual', 0)}</p>
@@ -332,26 +331,27 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
         """
         
         for finding in agent_list:
-            agent = finding.get("agent", "axe").lower()
-            violation = finding.get("violation", finding.get("rule_id", "Issue")).replace("_", " ")
-            guideline = finding.get("guideline", finding.get("compliance_level", "N/A"))
-            category = finding.get("category", "")
-            issue_desc = finding.get("issue", finding.get("description", "No description provided."))
-            impact = finding.get("impact", "N/A")
-            element = finding.get("element", finding.get("selector", ""))
-            url = finding.get("url", "")
+            agent = html_escape(str(finding.get("agent") or "axe").lower())
+            violation_val = finding.get("violation") or finding.get("rule_id") or "Issue"
+            violation = html_escape(str(violation_val).replace("_", " "))
+            guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "N/A"))
+            category = html_escape(str(finding.get("category") or ""))
+            issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
+            impact = html_escape(str(finding.get("impact") or "N/A"))
+            element = finding.get("element") or finding.get("selector") or ""
+            url = html_escape(str(finding.get("url") or ""))
             
             # Extract Recommended Fix
-            fix = finding.get("fix", "")
+            fix = finding.get("fix")
             if not fix:
                 if agent == "axe":
                     nodes = finding.get("nodes", [])
                     if nodes and isinstance(nodes, list) and len(nodes) > 0:
                         first_node = nodes[0]
                         if isinstance(first_node, dict):
-                            fix = first_node.get("failure_summary", first_node.get("failureSummary", ""))
+                            fix = first_node.get("failure_summary") or first_node.get("failureSummary")
                 else:
-                    desc = finding.get("description", "")
+                    desc = finding.get("description") or ""
                     if "Fix Recommended: " in desc:
                         fix = desc.split("Fix Recommended: ", 1)[1]
                     else:
@@ -359,17 +359,19 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                         if nodes and isinstance(nodes, list) and len(nodes) > 0:
                             first_node = nodes[0]
                             if isinstance(first_node, dict):
-                                fix = first_node.get("fix", first_node.get("failure_summary", ""))
+                                fix = first_node.get("fix") or first_node.get("failure_summary")
             
             if not fix:
                 fix = "No fix recommended."
+            else:
+                fix = html_escape(str(fix))
                 
             # Extract subcategory from tags
-            tags = finding.get("tags", [])
+            tags = finding.get("tags") or []
             subcategory = ""
             for t in tags:
                 if isinstance(t, str) and t.startswith("cat."):
-                    subcategory = t[4:].replace("-", " ").title()
+                    subcategory = html_escape(t[4:].replace("-", " ").title())
                     break
             
             if category and subcategory:
@@ -382,7 +384,7 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             # Forensic Intelligence Markers
             is_below_a = finding.get("compliance_level") == "Below A"
             
-            html += f"""
+            html_content = f"""
                 <div class="finding {agent}">
                     <div class="finding-header">
                         <h3 class="finding-title">{global_idx}. {violation} {cat_display}</h3>
@@ -403,21 +405,22 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             
             if element:
                 # Escape HTML tags for display
-                safe_element = str(element).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                html += f"""
+                safe_element = html_escape(str(element))
+                html_content += f"""
                     <div class="row" style="margin-top: 15px;">
                         <span class="label" style="display: block; margin-bottom: 5px;">Selector/Element:</span>
                         <div class="code-block">{safe_element}</div>
                     </div>
                 """
                 
-            html += f"""
+            html_content += f"""
                     <div class="fix-block">
                         <div class="fix-title">Recommended Fix:</div>
                         <div>{fix}</div>
                     </div>
                 </div>
             """
+            html += html_content
             global_idx += 1
 
     html += """

@@ -16,13 +16,29 @@ GENERIC_LINK_PATTERNS: Set[str] = {
 }
 
 
+import re
+
+# HTML entities and unicode arrow patterns for cleanup
+ARROW_PATTERNS = re.compile(r'&[a-z0-9#]+;|[→›»>…\-\.\(\)\[\]\{\}]')
+
+
 def is_ambiguous_link(text: str) -> bool:
     """
     WCAG 2.4.4 Link Purpose (In Context).
-    Flags links that don't explain where they go (e.g., "Click here").
+    Flags links that don't explain where they go (e.g., "Click here", "Read more...").
     """
-    clean_text = text.lower().strip()
-    return clean_text in GENERIC_LINK_PATTERNS
+    if not text:
+        return False
+    # Clean standard punctuation, arrows, and brackets
+    t_clean = ARROW_PATTERNS.sub(' ', text.lower())
+    # Strip non-alphanumeric
+    t_clean = re.sub(r'[^a-z0-9\s]', '', t_clean)
+    # Strip trailing numbers/footnotes (e.g. "learn more 3")
+    t_clean = re.sub(r'\s*\d+\s*$', '', t_clean)
+    # Normalize duplicate whitespace
+    t_clean = " ".join(t_clean.split())
+    
+    return t_clean in GENERIC_LINK_PATTERNS
 
 
 def is_missing_label_logic(attributes: Dict[str, str], sibling_text: str) -> bool:
@@ -31,12 +47,13 @@ def is_missing_label_logic(attributes: Dict[str, str], sibling_text: str) -> boo
     Checks if a form input has no visible or programmatic label.
     """
     has_aria_label = bool(attributes.get("ariaLabel", "").strip())
+    has_aria_labelledby = bool(attributes.get("ariaLabelledby", "").strip())
     has_title = bool(attributes.get("title", "").strip())
     has_placeholder = bool(attributes.get("placeholder", "").strip())
     has_visible_text = bool(sibling_text.strip())
 
     # If it has none of these, it's a cognitive barrier
-    return not (has_aria_label or has_title or has_placeholder or has_visible_text)
+    return not (has_aria_label or has_aria_labelledby or has_title or has_placeholder or has_visible_text)
 
 
 def is_missing_autocomplete(attributes: Dict[str, str]) -> bool:
