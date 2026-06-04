@@ -34,6 +34,20 @@ from urllib.parse import urlparse
 
 from auditor.shared.paths import REPORTS_DIR, DATABASE_URL, EXPORTS_DIR, PROJECT_ROOT, REDIS_URL # type: ignore
 from auditor.infrastructure.redis_task_queue import RedisTaskQueue # type: ignore
+# Dynamic UI Category Translation Configurations
+UI_CATEGORY_MAP = {
+    "perceivable": "Color & Contrast",
+    "operable": "Keyboard Navigation",
+    "understandable": "Structure",
+    "robust": "ARIA & Semantics"
+}
+
+UI_RULE_KEYWORD_MAP = {
+    "Color & Contrast": ["color", "contrast", "agent-visual"],
+    "ARIA & Semantics": ["aria", "role", "label", "agent-cognitive", "agent-neural"],
+    "Keyboard Navigation": ["keyboard", "tab", "focus", "agent-motor"]
+}
+
 router = APIRouter()
 
 def is_safe_url(url: str) -> bool:
@@ -185,11 +199,26 @@ async def get_dashboard_summary():
             nodes_count = sum(len(v.get("nodes", [])) for v in violations_data)
             crit = sum(1 for v in violations_data for node in v.get("nodes", []) if (node.get("impact") or v.get("impact") or "").lower() == "critical")
             score = max(0, round(100 - (crit * 10) - (nodes_count * 0.5)))
+            
+            # Map compliance level
+            levels = {v.get("compliance_level") for v in violations_data if v.get("compliance_level")}
+            if "Below A" in levels:
+                comp_lvl = "Below A"
+            elif "A" in levels:
+                comp_lvl = "A"
+            elif "AA" in levels:
+                comp_lvl = "AA"
+            elif "AAA" in levels:
+                comp_lvl = "AAA"
+            else:
+                comp_lvl = "AAA" if (s.status.value if hasattr(s.status, 'value') else str(s.status)) == "completed" else "N/A"
+                
             recent_scans.append({
                 "id": str(s.id),
                 "url": s.target_url,
                 "score": score,
-                "status": s.status.value,
+                "status": s.status.value if hasattr(s.status, 'value') else str(s.status),
+                "compliance_level": comp_lvl,
                 "date": (s.started_at or s.created_at or datetime.datetime.now()).isoformat(),
             })
 
@@ -233,29 +262,24 @@ async def get_audit_violations(audit_id: str):
             impact_val = v.impact.value if hasattr(v.impact, 'value') else str(v.impact)
             severity = impact_val.capitalize()
             
-            # Categorization Logic for Insights.tsx
+            # Categorization Logic for Insights.tsx (dynamically calculated for reliability)
             from auditor.shared.compliance_mapper import ComplianceMapper
-            cat_name = getattr(v, "category", "") or "General"
-            if cat_name in ("General", "General Accessibility"):
-                cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+            cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
                 
-            if "perceivable" in cat_name.lower():
-                category = "Color & Contrast"
-            elif "operable" in cat_name.lower():
-                category = "Keyboard Navigation"
-            elif "understandable" in cat_name.lower():
-                category = "Structure"
-            elif "robust" in cat_name.lower():
-                category = "ARIA & Semantics"
-            else:
+            category = None
+            cat_lower = cat_name.lower()
+            for key, ui_val in UI_CATEGORY_MAP.items():
+                if key in cat_lower:
+                    category = ui_val
+                    break
+            
+            if not category:
                 rule_id_lower = v.rule_id.lower()
-                if any(x in rule_id_lower for x in ["color", "contrast", "agent-visual"]):
-                    category = "Color & Contrast"
-                elif any(x in rule_id_lower for x in ["aria", "role", "label", "agent-cognitive", "agent-neural"]):
-                    category = "ARIA & Semantics"
-                elif any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "agent-motor"]):
-                    category = "Keyboard Navigation"
-                else:
+                for ui_val, keywords in UI_RULE_KEYWORD_MAP.items():
+                    if any(x in rule_id_lower for x in keywords):
+                        category = ui_val
+                        break
+                if not category:
                     category = "Structure"
 
             # Use the first node for selector and html if available
@@ -263,11 +287,18 @@ async def get_audit_violations(audit_id: str):
             html_str = ""
             nodes_list = []
             if hasattr(v, 'nodes') and v.nodes:
-                target_str = str(v.nodes[0].get("target", target_str))
+                raw_target = v.nodes[0].get("target", target_str)
+                if isinstance(raw_target, list):
+                    target_str = ", ".join(str(x) for x in raw_target)
+                else:
+                    target_str = str(raw_target)
                 html_str = str(v.nodes[0].get("html", ""))
                 for node in v.nodes:
                     enriched_node = dict(node)
                     enriched_node["impact"] = impact_val
+                    t_val = enriched_node.get("target", target_str)
+                    if isinstance(t_val, list):
+                        enriched_node["target"] = ", ".join(str(x) for x in t_val)
                     nodes_list.append(enriched_node)
             else:
                 nodes_list = [{"html": html_str or "N/A", "target": target_str, "failure_summary": v.description, "impact": impact_val}]
@@ -565,6 +596,7 @@ async def get_violation(violation_id: str):
             "selector": selector,
             "current_fragment": current_fragment,
             "suggested_fix": suggested_fix,
+            "fix": suggested_fix,
             "agent": getattr(v, "agent", "axe") or "axe"
         }
 

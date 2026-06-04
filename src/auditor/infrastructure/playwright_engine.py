@@ -63,16 +63,25 @@ VIEWPORT_CONFIGS = [
 
 class HardwareProfile:
     """Engine Hardware Emulation Profile Generator."""
+    DEVICE_MEMORIES = [8, 16, 32, 64]
+    HARDWARE_CONCURRENCIES = [4, 8, 12, 16, 32]
+    PLATFORMS = ["Win32", "MacIntel", "Linux x86_64"]
+    VENDORS = ["Google Inc.", "Apple Computer, Inc.", "Intel Inc."]
+    RENDERERS = [
+        "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0)",
+        "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0)",
+        "ANGLE (Apple, Apple M1 Direct3D11 vs_5_0 ps_5_0)"
+    ]
     
-    @staticmethod
-    def generate() -> Dict[str, Any]:
-        """Generates a high-fidelity hardware footprint for a fake user agent."""
+    @classmethod
+    def generate(cls) -> Dict[str, Any]:
+        """Generates a high-fidelity hardware footprint for a fake user agent using dynamic configuration."""
         return {
-            "deviceMemory": random.choice([8, 16, 32, 64]),
-            "hardwareConcurrency": random.choice([4, 8, 12, 16, 32]),
-            "platform": random.choice(["Win32", "MacIntel", "Linux x86_64"]),
-            "vendor": "Google Inc.",
-            "renderer": random.choice(["ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0)", "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0)"])
+            "deviceMemory": random.choice(cls.DEVICE_MEMORIES),
+            "hardwareConcurrency": random.choice(cls.HARDWARE_CONCURRENCIES),
+            "platform": random.choice(cls.PLATFORMS),
+            "vendor": random.choice(cls.VENDORS),
+            "renderer": random.choice(cls.RENDERERS)
         }
 
 # --------------------------------------------------------------------------
@@ -1057,8 +1066,9 @@ class PlaywrightEngine(IBrowserEngine):
                         description=f"Low Semantic Integrity (Score: {semantic_score}). The context {selector} lacks structural landmarks.",
                         help_url="https://auditor.agency/heuristics/semantics",
                         selector=selector,
-                        nodes=[{"html": f"<{selector}>", "target": selector, "failure_summary": "Incomplete semantic structure detected in isolated component."}],
-                        tags=["auditor", "heuristics", "semantics", "shadow-dom"]
+                        nodes=[{"html": f"<{selector}>", "target": selector, "failure_summary": "Incomplete semantic structure detected in isolated component.", "fix": "Use semantic HTML landmark tags (e.g. <main>, <nav>, <header>, <footer>) instead of generic <div> containers."}],
+                        tags=["auditor", "heuristics", "semantics", "shadow-dom", "wcag-1.3.1", "wcag2a"],
+                        agent="cognitive"
                     ))
             
             # Heuristic 4: Structural & Forensic Suite (Phase IV)
@@ -1126,8 +1136,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description="Potential missing ARIA live-region: Element ID/Class suggests dynamic updates without assistive notification.",
                 help_url="https://www.w3.org/WAI/WCAG21/Understanding/status-messages.html",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": "Dynamic container detected without aria-live or status role."}],
-                tags=["auditor", "forensics", "dynamic-v3"]
+                nodes=[{"html": html, "target": sel, "failure_summary": "Dynamic container detected without aria-live or status role.", "fix": "Add aria-live='polite' or role='status' to container that displays dynamic content updates."}],
+                tags=["auditor", "forensics", "dynamic-v3", "wcag-4.1.3", "wcag2aa"],
+                agent="neural"
             ))
         return violations
 
@@ -1186,8 +1197,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description=f"Logical input group '{name}' ({count} items) lacks structural container (fieldset/role='group').",
                 help_url="https://www.w3.org/WAI/tutorials/forms/grouping/",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": "Related inputs found without Fieldset or Role=Group."}],
-                tags=["auditor", "forensics", "forms-v2"]
+                nodes=[{"html": html, "target": sel, "failure_summary": "Related inputs found without Fieldset or Role=Group.", "fix": "Wrap related radio buttons or checkboxes in a <fieldset> with a <legend> for structural grouping, or use role='group'."}],
+                tags=["auditor", "forensics", "forms-v2", "wcag-3.3.2", "wcag2a"],
+                agent="cognitive"
             ))
         return violations
 
@@ -1230,9 +1242,11 @@ class PlaywrightEngine(IBrowserEngine):
                     "html": html, 
                     "target": sel, 
                     "failure_summary": "Missing <title> or ARIA label in vector graphic.",
-                    "suggested_fix": f"Add <title>{s_title}</title> as the first child of the <svg> element."
+                    "suggested_fix": f"Add <title>{s_title}</title> as the first child of the <svg> element.",
+                    "fix": f"Add a <title> element inside the SVG and set aria-hidden='false', or add aria-label='Description'."
                 }],
-                tags=["auditor", "forensics", "vector-v2"]
+                tags=["auditor", "forensics", "vector-v2", "wcag-1.1.1", "wcag2a"],
+                agent="visual"
             ))
         return violations
 
@@ -1299,8 +1313,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description=f"Potential contrast occlusion: Layered element '{sel}' overlaps text in '{tgt}'.",
                 help_url="https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": f"Z-Index layering may occlude underlying text content in {tgt}."}],
-                tags=["auditor", "forensics", "vision-v2"]
+                nodes=[{"html": html, "target": sel, "failure_summary": f"Z-Index layering may occlude underlying text content in {tgt}.", "fix": "Ensure layered or floating elements do not cover or overlap text content, and keep sufficient text contrast."}],
+                tags=["auditor", "forensics", "vision-v2", "wcag-1.4.3", "wcag2aa"],
+                agent="visual"
             ))
         return violations
 
@@ -1342,8 +1357,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description=f"Broken ARIA relationship: {attr} references non-existent ID '{missing}'.",
                 help_url="https://www.w3.org/WAI/ARIA/apg/practices/relationships/",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": f"Reference ID '{missing}' not found in DOM."}],
-                tags=["auditor", "heuristics", "aria-v3"]
+                nodes=[{"html": html, "target": sel, "failure_summary": f"Reference ID '{missing}' not found in DOM.", "fix": "Ensure that target elements referenced by aria-labelledby, aria-describedby, or aria-owns IDs actually exist in the DOM."}],
+                tags=["auditor", "heuristics", "aria-v3", "wcag-4.1.2", "wcag2a"],
+                agent="neural"
             ))
         return violations
 
@@ -1382,8 +1398,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description=f"Interactive target size too small ({round(width)}x{round(height)}px). Minimum recommended: 44x44px.",
                 help_url="https://www.w3.org/WAI/WCAG21/Understanding/target-size.html",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": "Small touch target."}],
-                tags=["auditor", "heuristics", "wcag-2.5.5"]
+                nodes=[{"html": html, "target": sel, "failure_summary": "Small touch target.", "fix": "Increase target size to at least 44x44px (or 24x24px for WCAG 2.2 Level AA target size minimum) or add padding."}],
+                tags=["auditor", "heuristics", "wcag-2.5.5", "wcag2aaa"],
+                agent="motor"
             ))
         return violations
 
@@ -1410,8 +1427,9 @@ class PlaywrightEngine(IBrowserEngine):
                     description=f"Generic alt text detected: '{alt}'. Provide descriptive context.",
                     help_url="https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
                     selector="img",
-                    nodes=[{"html": html, "target": "img", "failure_summary": "Meaningless alternative text."}],
-                    tags=["auditor", "heuristics", "wcag-1.1.1"]
+                    nodes=[{"html": html, "target": "img", "failure_summary": "Meaningless alternative text.", "fix": "Provide meaningful and descriptive alt text context (e.g. alt='Company Logo') or use alt='' if decorative."}],
+                    tags=["auditor", "heuristics", "wcag-1.1.1", "wcag2a"],
+                    agent="visual"
                 ))
         return violations
 
@@ -1429,8 +1447,9 @@ class PlaywrightEngine(IBrowserEngine):
                 description="Bypass block (Skip Link) missing. Screen reader users may face navigation fatigue.",
                 help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
                 selector="body",
-                nodes=[{"html": "<body>", "target": "body", "failure_summary": "No mechanism to skip repetitive content."}],
-                tags=["auditor", "heuristics", "wcag-2.4.1"]
+                nodes=[{"html": "<body>", "target": "body", "failure_summary": "No mechanism to skip repetitive content.", "fix": "Add a visually hidden 'Skip to main content' link as the first focusable element inside the <body> tag."}],
+                tags=["auditor", "heuristics", "wcag-2.4.1", "wcag2a"],
+                agent="motor"
             )]
         return []
 
@@ -1452,8 +1471,9 @@ class PlaywrightEngine(IBrowserEngine):
                     description=f"Skipped heading level detected (H{prev_h} to H{curr_h}).",
                     help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
                     selector=f"h{curr_h}",
-                    nodes=[{"html": f"<h{curr_h}>", "target": f"h{curr_h}", "failure_summary": "Illogical structural hierarchy."}],
-                    tags=["auditor", "heuristics", "wcag-1.3.1"]
+                    nodes=[{"html": f"<h{curr_h}>", "target": f"h{curr_h}", "failure_summary": "Illogical structural hierarchy.", "fix": f"Adjust heading levels (e.g., change H{curr_h} to H{prev_h + 1}) to preserve sequential heading hierarchy."}],
+                    tags=["auditor", "heuristics", "wcag-1.3.1", "wcag2a"],
+                    agent="cognitive"
                 ))
         return violations
 
@@ -1550,8 +1570,9 @@ class PlaywrightEngine(IBrowserEngine):
                     description=f"Language Inconsistency. Declared 'lang=\"{declared_lang}\"', but content appears to be {major_detected}.",
                     help_url="https://auditor.agency/heuristics/language-mismatch",
                     selector="html",
-                    nodes=[{"html": f"<html lang=\"{declared_lang}\">", "target": "html", "failure_summary": "Linguistic signature mismatch."}],
-                    tags=["auditor", "heuristics", "language", "wcag-3.1.1"]
+                    nodes=[{"html": f"<html lang=\"{declared_lang}\">", "target": "html", "failure_summary": "Linguistic signature mismatch.", "fix": f"Ensure the lang attribute on the <html> element matches the actual primary language of the content (e.g., change lang to lang='{major_detected}')."}],
+                    tags=["auditor", "heuristics", "language", "wcag-3.1.1", "wcag2a"],
+                    agent="cognitive"
                 ))
         except Exception as e:
             self.logger.error(f"Language integrity check failure: {e}")
@@ -2172,8 +2193,9 @@ class PlaywrightEngine(IBrowserEngine):
                         description=f"Keyboard Focus Trap detected: Navigation locked on '{stuck_el}'.",
                         help_url="https://www.w3.org/WAI/WCAG21/Understanding/no-keyboard-trap.html",
                         selector=stuck_el,
-                        nodes=[{"html": "Interactive Loop Detected", "target": stuck_el, "failure_summary": "Keyboard focus cannot exit this element or container."}],
-                        tags=["auditor", "forensics", "navigation-v3"]
+                        nodes=[{"html": "Interactive Loop Detected", "target": stuck_el, "failure_summary": "Keyboard focus cannot exit this element or container.", "fix": "Ensure keyboard focus can move past this element using standard Tab/Shift-Tab navigation without getting stuck."}],
+                        tags=["auditor", "forensics", "navigation-v3", "wcag-2.1.2", "wcag2a"],
+                        agent="motor"
                     ))
         except Exception as e:
             self.logger.error(f"Focus-Trap Forensic Anomaly: {e}")

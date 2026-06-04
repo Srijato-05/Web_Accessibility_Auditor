@@ -12,8 +12,8 @@ from typing import Dict, Any
 class StealthProtocol:
     """Core Evasion Logic for the Auditor Engine."""
     
-    @staticmethod
-    def get_injection_script(profile: Dict[str, Any]) -> str:
+    @classmethod
+    def get_injection_script(cls, profile: Dict[str, Any]) -> str:
         """Generates the high-fidelity JS payload for browser injection."""
         hardware = profile.get("hardware", {})
         hints = profile.get("clientHints", {})

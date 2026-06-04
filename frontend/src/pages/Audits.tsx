@@ -149,6 +149,7 @@ export default function Audits() {
                     ) : <ArrowUpDown size={10} className="opacity-40" />}
                   </div>
                 </th>
+                <th scope="col" className="px-6 py-4 text-center">Compliance Level</th>
                 <th scope="col" className="px-6 py-4 text-center">PDF Report</th>
                 <th 
                   scope="col" 
@@ -179,6 +180,17 @@ export default function Audits() {
                       'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
                     }`}>
                       {scan.status === 'completed' ? 'Completed' : scan.status === 'failed' ? 'Failed' : 'In Progress'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
+                      scan.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
+                      scan.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
+                      scan.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
+                      scan.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
+                      'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                    }`}>
+                      {scan.compliance_level || 'N/A'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">

@@ -50,34 +50,30 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
             a_lower = str(a).lower()
             if a_lower in full_matrix:
                 for cat, val in categories.items():
+                    from auditor.shared.compliance_mapper import ComplianceMapper
+                    principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
                     cat_lower = str(cat).lower()
                     norm_cat = "General"
-                    if "perceivable" in cat_lower:
-                        norm_cat = "Perceivable"
-                    elif "operable" in cat_lower:
-                        norm_cat = "Operable"
-                    elif "understandable" in cat_lower:
-                        norm_cat = "Understandable"
-                    elif "robust" in cat_lower:
-                        norm_cat = "Robust"
+                    for p in principles:
+                        if p.lower() in cat_lower:
+                            norm_cat = p
+                            break
                     
                     full_matrix[a_lower][norm_cat] += val
     else:
         # Calculate matrix dynamically from findings
+        from auditor.shared.compliance_mapper import ComplianceMapper
+        principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
         for f in findings:
             if isinstance(f, dict):
                 agent = str(f.get("agent", "axe")).lower()
                 category = str(f.get("category", "General")).lower()
                 
                 norm_cat = "General"
-                if "perceivable" in category:
-                    norm_cat = "Perceivable"
-                elif "operable" in category:
-                    norm_cat = "Operable"
-                elif "understandable" in category:
-                    norm_cat = "Understandable"
-                elif "robust" in category:
-                    norm_cat = "Robust"
+                for p in principles:
+                    if p.lower() in category:
+                        norm_cat = p
+                        break
                 
                 if agent in full_matrix:
                     full_matrix[agent][norm_cat] += 1

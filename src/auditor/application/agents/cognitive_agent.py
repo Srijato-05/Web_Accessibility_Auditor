@@ -17,7 +17,7 @@ from typing import List
 from auditor.domain.agent_finding import AgentFinding # type: ignore
 from auditor.infrastructure.data_extractor import PageData # type: ignore
 from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
-from auditor.application.agents.rules.cognitive_rules import is_ambiguous_link, is_missing_label_logic # type: ignore
+from auditor.application.agents.rules.cognitive_rules import is_ambiguous_link, is_missing_label_logic, is_missing_autocomplete, is_justified_text # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 
 
@@ -74,6 +74,41 @@ class CognitiveAgent(IAccessibilityAgent):
                     confidence=0.95,
                     source="rule",
                     wcag_criterion="3.3.2",
+                    session_id=str(page_data.session_id)
+                ))
+            
+            # Check Form Elements for autocomplete (WCAG 1.3.5)
+            if is_missing_autocomplete(form.attributes):
+                findings.append(AgentFinding(
+                    agent="cognitive",
+                    violation_type="guidance",
+                    guideline="G131",
+                    element=form.html,
+                    selector=form.selector,
+                    issue="Form field collects personal data but is missing an autocomplete attribute.",
+                    impact="Users with cognitive, memory, or language impairments may struggle to fill out personal input fields accurately without browser autofill support.",
+                    fix="Add a valid autocomplete attribute (e.g. autocomplete='email' or autocomplete='current-password').",
+                    confidence=0.85,
+                    source="rule",
+                    wcag_criterion="1.3.5",
+                    session_id=str(page_data.session_id)
+                ))
+
+        # Check Text Elements for Justified Text (WCAG 1.4.8)
+        for text in page_data.text_elements:
+            if is_justified_text(text.computed_styles):
+                findings.append(AgentFinding(
+                    agent="cognitive",
+                    violation_type="predictability",
+                    guideline="G162",
+                    element=text.html,
+                    selector=text.selector,
+                    issue="Text layout is set to justified alignment.",
+                    impact="Justified text creates uneven spacing (rivers of white) that makes reading and scanning extremely difficult for users with dyslexia or cognitive impairments.",
+                    fix="Remove text-align: justify and use left alignment (or right alignment depending on direction).",
+                    confidence=0.90,
+                    source="rule",
+                    wcag_criterion="1.4.8",
                     session_id=str(page_data.session_id)
                 ))
 

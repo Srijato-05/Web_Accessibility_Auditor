@@ -33,6 +33,7 @@ interface DashboardSummary {
     url: string;
     score: number;
     status: string;
+    compliance_level?: string;
     date: string;
   }[];
 }
@@ -94,28 +95,26 @@ export default function Dashboard() {
             <p className="text-[10px] text-on-surface-variant mt-2 leading-relaxed">Unique target host endpoints registered in network.</p>
           </div>
 
-          <div className="glass-panel p-6 border-t-4 border-t-secondary flex flex-col justify-between min-h-[140px]">
-            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">AI Agent Missions</span>
-            <div className="flex items-baseline gap-2 mt-4">
-              <span className="text-5xl font-heading font-bold text-secondary">
-                {summary.agent_insights?.total_missions || 0}
-              </span>
-              <span className="text-sm font-mono text-on-surface-variant">
-                Missions
-              </span>
-            </div>
-            <p className="text-[10px] text-on-surface-variant mt-2 leading-relaxed">Simulated accessibility agent audits executed.</p>
-          </div>
-
           <div className="glass-panel p-6 border-t-4 border-t-error flex flex-col justify-between min-h-[140px]">
-            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Active Violations</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Critical & Major Violations</span>
             <div className="flex items-baseline gap-2 mt-4">
               <span className="text-4xl font-heading font-bold text-error">
                 {summary.issues ? (summary.issues.critical + summary.issues.major) : 0}
               </span>
-              <span className="text-xs font-mono text-on-surface-variant">Unresolved</span>
+              <span className="text-xs font-mono text-on-surface-variant">High-Risk</span>
             </div>
             <p className="text-[10px] text-on-surface-variant mt-2 leading-relaxed">Combined count of Critical and Major severity bugs.</p>
+          </div>
+
+          <div className="glass-panel p-6 border-t-4 border-t-secondary flex flex-col justify-between min-h-[140px]">
+            <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Total Violations</span>
+            <div className="flex items-baseline gap-2 mt-4">
+              <span className="text-4xl font-heading font-bold text-secondary">
+                {summary.issues ? (summary.issues.critical + summary.issues.major + summary.issues.minor) : 0}
+              </span>
+              <span className="text-xs font-mono text-on-surface-variant">All Issues</span>
+            </div>
+            <p className="text-[10px] text-on-surface-variant mt-2 leading-relaxed">Total count of Critical, Major, and Minor accessibility bugs.</p>
           </div>
 
           <div className="glass-panel p-6 border-t-4 border-t-primary/50 flex flex-col justify-between min-h-[140px]">
@@ -255,6 +254,7 @@ export default function Dashboard() {
                 <thead>
                   <tr className="border-b border-surface-border bg-surface-highlight/50 text-xs uppercase tracking-wider text-on-surface-variant font-bold">
                     <th scope="col" className="px-6 py-4">Target Host</th>
+                    <th scope="col" className="px-6 py-4 text-center">Status</th>
                     <th scope="col" className="px-6 py-4 text-center">Compliance Level</th>
                     <th scope="col" className="px-6 py-4 text-center">Advice Report</th>
                     <th scope="col" className="px-6 py-4 text-right">Timestamp</th>
@@ -278,6 +278,17 @@ export default function Dashboard() {
                           'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
                         }`}>
                           {log.status === 'completed' ? 'Completed' : log.status === 'failed' ? 'Failed' : 'In Progress'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
+                          log.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
+                          log.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
+                          log.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
+                          log.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
+                          'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                        }`}>
+                          {log.compliance_level || 'N/A'}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">

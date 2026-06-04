@@ -48,6 +48,14 @@ def test_get_category_by_wcag_number():
     # wcag4xx -> Robust
     assert ComplianceMapper.get_category(["wcag411"]) == "Robust"
 
+    # WCAG Criterion (e.g. 2.5.5 or wcag2.5.5) -> Operable
+    assert ComplianceMapper.get_category(["wcag2.5.5"]) == "Operable"
+    assert ComplianceMapper.get_category(["2.5.5"]) == "Operable"
+
+    # WCAG technique (e.g. wcagG44) -> Should fall through to agent or other logic, not Robust
+    # It falls through to motor agent -> Operable, but on tags alone (no agent/rule_id) it should fall through to General Accessibility
+    assert ComplianceMapper.get_category(["wcagG44"]) == "General Accessibility"
+
 def test_get_category_by_rule_id():
     assert ComplianceMapper.get_category([], rule_id="color-contrast") == "Perceivable"
     assert ComplianceMapper.get_category([], rule_id="keyboard-focus") == "Operable"

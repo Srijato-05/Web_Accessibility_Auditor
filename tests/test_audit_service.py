@@ -659,3 +659,97 @@ async def test_audit_service_auxiliary_and_fallback_coverage():
     # 12. Test _sync_local_ledger_with_global_atlas
     service._sync_local_ledger_with_global_atlas()
 
+
+def test_audit_service_deduplication_heuristics():
+    from auditor.application.audit_service import AuditService
+    from auditor.domain.violation import Violation, ImpactLevel
+    from auditor.domain.agent_finding import AgentFinding
+    from uuid import uuid4
+    
+    service = AuditService(MagicMock(), MagicMock())
+    
+    # Existing AXE violation in list
+    v = Violation(
+        rule_id="color-contrast",
+        impact=ImpactLevel.SERIOUS,
+        agent="visual",
+        description="Low contrast",
+        help_url="http",
+        session_id=uuid4(),
+        tags=["wcag2aa", "wcag143"],
+        compliance_level="AA",
+        category="perceivable",
+        url="http"
+    )
+    v.selector = "div#main > input.form-control"
+    v.nodes = [{"target": "div#main > input.form-control", "html": '<input class="form-control" id="email" />'}]
+    
+    # 1. Matching by exact selector and tag intersection (wcag143 digits "143" intersects with wcag_criterion "1.4.3" -> "143")
+    finding1 = AgentFinding(
+        agent="cognitive",
+        violation_type="contrast",
+        guideline="G18",
+        element='<input class="form-control" id="email" />',
+        selector="div#main > input.form-control",
+        issue="Low contrast issue",
+        impact="high",
+        fix="Fix color",
+        confidence=0.9,
+        source="rule",
+        wcag_criterion="1.4.3",
+        session_id=str(uuid4())
+    )
+    assert service._is_duplicate_finding(finding1, [v]) is True
+    
+    # 2. Matching by selector containment (selector "input.form-control" is subset of "div#main > input.form-control")
+    finding2 = AgentFinding(
+        agent="cognitive",
+        violation_type="contrast",
+        guideline="G18",
+        element='<input class="form-control" id="email" />',
+        selector="input.form-control",
+        issue="Low contrast issue",
+        impact="high",
+        fix="Fix color",
+        confidence=0.9,
+        source="rule",
+        wcag_criterion="1.4.3",
+        session_id=str(uuid4())
+    )
+    assert service._is_duplicate_finding(finding2, [v]) is True
+    
+    # 3. Matching by HTML snippet overlap (selector is completely different e.g. "body #email", but outer html starts-with or matches)
+    finding3 = AgentFinding(
+        agent="cognitive",
+        violation_type="contrast",
+        guideline="G18",
+        element='<input class="form-control" id="email" />',
+        selector="body #email",
+        issue="Low contrast issue",
+        impact="high",
+        fix="Fix color",
+        confidence=0.9,
+        source="rule",
+        wcag_criterion="1.4.3",
+        session_id=str(uuid4())
+    )
+    assert service._is_duplicate_finding(finding3, [v]) is True
+    
+    # 4. Non-matching because criteria does not match
+    finding4 = AgentFinding(
+        agent="cognitive",
+        violation_type="contrast",
+        guideline="G18",
+        element='<input class="form-control" id="email" />',
+        selector="input.form-control",
+        issue="Low contrast issue",
+        impact="high",
+        fix="Fix color",
+        confidence=0.9,
+        source="rule",
+        wcag_criterion="3.3.2", # WCAG 3.3.2 does not match wcag143
+        session_id=str(uuid4())
+    )
+    assert service._is_duplicate_finding(finding4, [v]) is False
+
+

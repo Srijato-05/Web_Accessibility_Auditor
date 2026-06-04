@@ -70,24 +70,30 @@ class AuditReporter:
         for v in violations:
             impact_val = v.impact.value if hasattr(v.impact, 'value') else str(v.impact)
             
-            # Category
+            # Category & Compliance Level dynamic recalculation for report consistency
             from auditor.shared.compliance_mapper import ComplianceMapper
-            cat_name = getattr(v, "category", "") or "General"
-            if cat_name in ("General", "General Accessibility"):
-                cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+            cat_name = v.category if (hasattr(v, 'category') and v.category) else ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+            comp_level = ComplianceMapper.get_compliance_level(v.tags or [], v.impact)
                 
             # Nodes
             target_str = v.selector if hasattr(v, 'selector') else "Unknown"
             html_str = ""
             nodes_list = []
             if hasattr(v, 'nodes') and v.nodes:
-                target_str = str(v.nodes[0].get("target", target_str))
+                raw_target = v.nodes[0].get("target", target_str)
+                if isinstance(raw_target, list):
+                    target_str = ", ".join(str(x) for x in raw_target)
+                else:
+                    target_str = str(raw_target)
                 html_str = str(v.nodes[0].get("html", ""))
                 for node in v.nodes:
                     enriched_node = dict(node)
                     enriched_node["impact"] = impact_val
-                    enriched_node["compliance_level"] = v.compliance_level or "N/A"
+                    enriched_node["compliance_level"] = comp_level or "N/A"
                     enriched_node["category"] = cat_name
+                    t_val = enriched_node.get("target", target_str)
+                    if isinstance(t_val, list):
+                        enriched_node["target"] = ", ".join(str(x) for x in t_val)
                     nodes_list.append(enriched_node)
             else:
                 nodes_list = [{
@@ -95,7 +101,7 @@ class AuditReporter:
                     "target": target_str,
                     "failure_summary": v.description,
                     "impact": impact_val,
-                    "compliance_level": v.compliance_level or "N/A",
+                    "compliance_level": comp_level or "N/A",
                     "category": cat_name
                 }]
                 
@@ -137,7 +143,9 @@ class AuditReporter:
                     "category": node.get("category", "General"),
                     "severity_matrix": node.get("impact", "minor").capitalize(),
                     "url": g_val["url"],
-                    "html": node.get("html", "")
+                    "html": node.get("html", ""),
+                    "failure_summary": node.get("failure_summary", node.get("failureSummary", "")),
+                    "fix": node.get("fix", node.get("suggested_fix", node.get("failure_summary", "")))
                 })
 
         # 3. Serialize Data

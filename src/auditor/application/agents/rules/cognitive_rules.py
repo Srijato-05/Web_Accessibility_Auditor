@@ -37,3 +37,44 @@ def is_missing_label_logic(attributes: Dict[str, str], sibling_text: str) -> boo
 
     # If it has none of these, it's a cognitive barrier
     return not (has_aria_label or has_title or has_placeholder or has_visible_text)
+
+
+def is_missing_autocomplete(attributes: Dict[str, str]) -> bool:
+    """
+    WCAG 1.3.5 Identify Input Purpose (Level AA).
+    Checks if personal data input fields lack an autocomplete attribute,
+    which is a cognitive barrier.
+    """
+    input_type = attributes.get("type", "").lower()
+    input_name = attributes.get("name", "").lower()
+    input_id = attributes.get("id", "").lower()
+    
+    # We target common fields that collect personal information
+    personal_keywords = [
+        "email", "password", "username", "login", "phone", "tel", "address", 
+        "street", "zip", "postal", "country", "card", "cc-", "fname", "lname", 
+        "first-name", "last-name", "birth", "dob"
+    ]
+    
+    is_personal = (
+        input_type in ["email", "password", "tel"] or
+        any(k in input_name for k in personal_keywords) or
+        any(k in input_id for k in personal_keywords)
+    )
+    
+    if is_personal:
+        # Check if autocomplete is defined and non-empty
+        autocomplete = attributes.get("autocomplete", "").strip()
+        return not autocomplete
+        
+    return False
+
+
+def is_justified_text(styles: Dict[str, str]) -> bool:
+    """
+    WCAG 1.4.8 Visual Presentation (Level AAA).
+    Checks if text-align is set to 'justify', which can create reading hurdles 
+    for users with cognitive/reading disabilities (e.g. dyslexia).
+    """
+    align = styles.get("textAlign", "").lower()
+    return align == "justify"

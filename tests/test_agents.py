@@ -835,3 +835,115 @@ async def test_agent_controller_non_list_agent_result():
     assert len(findings) == 0
 
 
+def test_cognitive_rules_additional():
+    from auditor.application.agents.rules.cognitive_rules import is_missing_autocomplete, is_justified_text
+    
+    # 1. Test is_missing_autocomplete
+    # Personal input without autocomplete -> True
+    assert is_missing_autocomplete({"type": "email", "name": "user_email"}) is True
+    # Personal input with autocomplete -> False
+    assert is_missing_autocomplete({"type": "email", "name": "user_email", "autocomplete": "email"}) is False
+    # Non-personal input without autocomplete -> False
+    assert is_missing_autocomplete({"type": "text", "name": "search_query"}) is False
+    
+    # 2. Test is_justified_text
+    assert is_justified_text({"textAlign": "justify"}) is True
+    assert is_justified_text({"textAlign": "left"}) is False
+    assert is_justified_text({}) is False
+
+
+@pytest.mark.asyncio
+async def test_cognitive_agent_new_rules():
+    from auditor.application.agents.cognitive_agent import CognitiveAgent
+    from auditor.infrastructure.data_extractor import ElementData, PageData
+    
+    agent = CognitiveAgent()
+    
+    # Personal input without autocomplete (also triggers label logic fallback)
+    form_el = ElementData(
+        tag="input",
+        html="<input type='email' id='user_email'>",
+        selector="input#user_email",
+        text="",
+        computed_styles={},
+        attributes={"type": "email", "id": "user_email"},
+        bounding_box={},
+        parent_styles={}
+    )
+    
+    # Justified text element
+    text_el = ElementData(
+        tag="p",
+        html="<p style='text-align: justify'>Justified Text</p>",
+        selector="p",
+        text="Justified Text",
+        computed_styles={"textAlign": "justify"},
+        attributes={},
+        bounding_box={},
+        parent_styles={}
+    )
+    
+    page_data = PageData(
+        url="https://test.com",
+        links=[],
+        text_elements=[text_el],
+        form_elements=[form_el],
+        images=[],
+        screenshot=None,
+        session_id=uuid.uuid4()
+    )
+    
+    findings = await agent.analyze(page_data)
+    issue_types = [f.wcag_criterion for f in findings]
+    assert "1.3.5" in issue_types
+    assert "1.4.8" in issue_types
+
+
+@pytest.mark.asyncio
+async def test_motor_agent_keyboard_trap():
+    from auditor.application.agents.motor_agent import MotorAgent
+    from auditor.infrastructure.data_extractor import ElementData, PageData
+    
+    agent = MotorAgent()
+    
+    # Link with negative tabindex
+    link_el = ElementData(
+        tag="a",
+        html="<a href='/path' tabindex='-1'>Hidden Link</a>",
+        selector="a",
+        text="Hidden Link",
+        computed_styles={},
+        attributes={"tabindex": "-1"},
+        bounding_box={"width": 100, "height": 50},
+        parent_styles={}
+    )
+    
+    # Form input with negative tabindex
+    form_el = ElementData(
+        tag="input",
+        html="<input tabindex='-1'>",
+        selector="input",
+        text="",
+        computed_styles={},
+        attributes={"tabindex": "-1"},
+        bounding_box={"width": 100, "height": 50},
+        parent_styles={}
+    )
+    
+    page_data = PageData(
+        url="https://test.com",
+        links=[link_el],
+        text_elements=[],
+        form_elements=[form_el],
+        images=[],
+        screenshot=None,
+        session_id=uuid.uuid4()
+    )
+    
+    findings = await agent.analyze(page_data)
+    issue_types = [f.wcag_criterion for f in findings]
+    assert "2.1.1" in issue_types
+    assert issue_types.count("2.1.1") == 2
+
+
+

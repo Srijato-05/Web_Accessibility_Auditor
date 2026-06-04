@@ -13,132 +13,183 @@ class ComplianceMapper:
     """
     Forensic engine to map raw engine tags to high-level compliance frameworks.
     """
+    # Dynamic POUR Principle Mappings
+    WCAG_PRINCIPLES = {
+        "1": "Perceivable",
+        "2": "Operable",
+        "3": "Understandable",
+        "4": "Robust"
+    }
 
-    @staticmethod
-    def get_compliance_level(tags: List[str], impact: ImpactLevel) -> str:
+    # Custom Heuristic Rule Prefix/Substring Mappings
+    HEURISTIC_RULES = {
+        "heuristic-semantic": "Understandable",
+        "heuristic-live-reg": "Robust",
+        "heuristic-form-grp": "Understandable",
+        "heuristic-svg-acc": "Perceivable",
+        "heuristic-overlap": "Perceivable",
+        "heuristic-aria-rel": "Robust",
+        "heuristic-target": "Operable",
+        "heuristic-alt": "Perceivable",
+        "heuristic-skip": "Operable",
+        "heuristic-head": "Perceivable",
+        "heuristic-lang": "Understandable",
+        "heuristic-focus-trap": "Operable"
+    }
+
+    # Keyword patterns for Rule IDs and Tags
+    RULE_SUBSTRINGS = {
+        "Perceivable": ["color", "contrast", "alt", "text", "sensory", "visual", "image", "heading", "title", "media", "audio", "video"],
+        "Operable": ["keyboard", "tab", "focus", "target", "nav", "motor", "pointer", "size", "link", "bypass", "skip", "scroll"],
+        "Understandable": ["label", "form", "predict", "cognitive", "lang", "input", "error", "valid"],
+        "Robust": ["aria", "parsing", "neural", "role", "value", "id", "duplicate"]
+    }
+
+    # Axe category tag groupings
+    # Axe category tag groupings
+    AXE_CATEGORIES = {
+        "Perceivable": ["cat.color", "cat.contrast", "cat.text-alternatives", "cat.sensory-and-visual-cues", "cat.time-and-media", "cat.semantics"],
+        "Operable": ["cat.keyboard", "cat.navigation", "cat.title", "cat.structure"],
+        "Understandable": ["cat.forms", "cat.language", "cat.labels"],
+        "Robust": ["cat.aria", "cat.parsing", "cat.name-role-value"]
+    }
+
+    # Agent fallbacks
+    AGENT_CATEGORIES = {
+        "visual": "Perceivable",
+        "motor": "Operable",
+        "cognitive": "Understandable",
+        "neural": "Robust"
+    }
+
+    # Severity Matrix descriptions
+    SEVERITY_DESCRIPTIONS = {
+        "critical": "Critical (High-Friction / Legal Risk)",
+        "serious": "Serious (Significant Barrier)",
+        "moderate": "Moderate (Inconvenience)",
+        "minor": "Minor (Best Practice)"
+    }
+
+    # WCAG criteria to compliance level mappings
+    WCAG_CRITERIA_LEVELS = {
+        # Level A
+        "1.1.1": "A", "1.2.1": "A", "1.2.2": "A", "1.2.3": "A", "1.3.1": "A", "1.3.2": "A", "1.3.3": "A",
+        "1.4.1": "A", "1.4.2": "A", "2.1.1": "A", "2.1.2": "A", "2.1.4": "A", "2.2.1": "A", "2.2.2": "A",
+        "2.3.1": "A", "2.4.1": "A", "2.4.2": "A", "2.4.3": "A", "2.4.4": "A", "2.5.1": "A", "2.5.2": "A",
+        "2.5.3": "A", "2.5.4": "A", "3.1.1": "A", "3.2.1": "A", "3.2.2": "A", "3.3.1": "A", "3.3.2": "A",
+        "4.1.1": "A", "4.1.2": "A",
+        # Level AA
+        "1.2.4": "AA", "1.2.5": "AA", "1.3.4": "AA", "1.3.5": "AA", "1.4.3": "AA", "1.4.4": "AA", "1.4.5": "AA",
+        "1.4.10": "AA", "1.4.11": "AA", "1.4.12": "AA", "1.4.13": "AA", "2.4.5": "AA", "2.4.6": "AA", "2.4.7": "AA",
+        "2.4.11": "AA", "2.4.12": "AA", "2.5.7": "AA", "2.5.8": "AA", "3.1.2": "AA", "3.2.3": "AA", "3.2.4": "AA",
+        "3.3.3": "AA", "3.3.4": "AA", "3.3.7": "AA", "3.3.8": "AA", "4.1.3": "AA",
+        # Level AAA
+        "1.2.6": "AAA", "1.2.7": "AAA", "1.2.8": "AAA", "1.2.9": "AAA", "1.3.6": "AAA", "1.4.6": "AAA", "1.4.7": "AAA",
+        "1.4.8": "AAA", "1.4.9": "AAA", "2.1.3": "AAA", "2.2.3": "AAA", "2.2.4": "AAA", "2.2.5": "AAA", "2.2.6": "AAA",
+        "2.3.2": "AAA", "2.3.3": "AAA", "2.4.8": "AAA", "2.4.9": "AAA", "2.4.10": "AAA", "2.4.13": "AAA", "2.5.5": "AAA",
+        "2.5.6": "AAA", "3.1.3": "AAA", "3.1.4": "AAA", "3.1.5": "AAA", "3.1.6": "AAA", "3.2.5": "AAA", "3.2.6": "AAA",
+        "3.3.5": "AAA", "3.3.6": "AAA", "3.3.9": "AAA"
+    }
+
+    @classmethod
+    def get_compliance_level(cls, tags: List[str], impact: ImpactLevel) -> str:
         """
         Derives WCAG compliance level (Below A, A, AA, AAA) from tags and impact.
         'Below A' represents critical mission-blocking failures of Level A criteria.
         """
+        tags_lower = [str(t).lower() for t in tags]
         val = impact.value if hasattr(impact, 'value') else str(impact).lower()
         
-        is_level_a = any("wcag2a" in t or "wcag21a" in t for t in tags)
-        
+        # 1. Parse WCAG criterion from tags if present (e.g. "1.3.5" or "wcag-1.3.5")
+        for t in tags_lower:
+            clean_tag = t.replace("wcag", "").replace("-", "").strip()
+            # If it's a numeric string with dots or digits, e.g. "1.3.5" or "135"
+            if clean_tag and clean_tag[0].isdigit():
+                clean_tag_digits = "".join(c for c in clean_tag if c.isdigit() or c == ".")
+                if clean_tag_digits in cls.WCAG_CRITERIA_LEVELS:
+                    lvl = cls.WCAG_CRITERIA_LEVELS[clean_tag_digits]
+                    if lvl == "A" and val == "critical":
+                        return "Below A"
+                    return lvl
+                
+                # Check for 3-digit normalized format (e.g., "135" -> "1.3.5")
+                normalized = "".join(c for c in clean_tag if c.isdigit())
+                if len(normalized) == 3:
+                    dotted = f"{normalized[0]}.{normalized[1]}.{normalized[2]}"
+                    if dotted in cls.WCAG_CRITERIA_LEVELS:
+                        lvl = cls.WCAG_CRITERIA_LEVELS[dotted]
+                        if lvl == "A" and val == "critical":
+                            return "Below A"
+                        return lvl
+
+        # 2. Fallback to standard suffix checking
+        is_level_a = any("wcag2a" in t or "wcag21a" in t for t in tags_lower)
         if is_level_a and val == "critical":
             return "Below A"
             
-        if any("wcag2aaa" in t or "wcag21aaa" in t for t in tags):
+        if any("wcag2aaa" in t or "wcag21aaa" in t for t in tags_lower):
             return "AAA"
-        if any("wcag2aa" in t or "wcag21aa" in t or "wcag22aa" in t for t in tags):
+        if any("wcag2aa" in t or "wcag21aa" in t or "wcag22aa" in t for t in tags_lower):
             return "AA"
         if is_level_a:
             return "A"
             
         return "Non-Standard"
 
-    @staticmethod
-    def get_category(tags: List[str], rule_id: str = "", agent: str = "") -> str:
-        """Maps axe-core categories to WCAG principles (POUR)."""
+    @classmethod
+    def get_category(cls, tags: List[str], rule_id: str = "", agent: str = "") -> str:
+        """Maps axe-core categories to WCAG principles (POUR) dynamically using configuration mappings."""
         tags_lower = [str(t).lower() for t in tags]
         rule_id_lower = str(rule_id).lower()
         agent_lower = str(agent).lower()
 
-        # 1. Check Agent Type first if it is a specific simulated agent
-        if agent_lower == "visual":
-            return "Perceivable"
-        elif agent_lower == "motor":
-            return "Operable"
-        elif agent_lower == "cognitive":
-            return "Understandable"
-        elif agent_lower == "neural":
-            return "Robust"
+        # 1. Check custom heuristic rules specifically
+        for pattern, principle in cls.HEURISTIC_RULES.items():
+            if pattern in rule_id_lower:
+                return principle
 
-        # 2. Check custom heuristic rules specifically
-        if "heuristic-semantic" in rule_id_lower:
-            return "Understandable"
-        elif "heuristic-live-reg" in rule_id_lower:
-            return "Robust"
-        elif "heuristic-form-grp" in rule_id_lower:
-            return "Understandable"
-        elif "heuristic-svg-acc" in rule_id_lower:
-            return "Perceivable"
-        elif "heuristic-overlap" in rule_id_lower:
-            return "Perceivable"
-        elif "heuristic-aria-rel" in rule_id_lower:
-            return "Robust"
-        elif "heuristic-target" in rule_id_lower:
-            return "Operable"
-        elif "heuristic-alt" in rule_id_lower:
-            return "Perceivable"
-        elif "heuristic-skip" in rule_id_lower:
-            return "Operable"
-        elif "heuristic-head" in rule_id_lower:
-            return "Perceivable"
-        elif "heuristic-lang" in rule_id_lower:
-            return "Understandable"
-        elif "heuristic-focus-trap" in rule_id_lower:
-            return "Operable"
+        # 2. Axe Category Prefixes exact match fallback (higher precedence than substring match)
+        for principle, categories in cls.AXE_CATEGORIES.items():
+            if any(cat in tags_lower for cat in categories):
+                return principle
 
-        # 3. Check tags for key indicators
-        if any("color" in t or "contrast" in t or "text-alt" in t or "sensory" in t or "visual" in t for t in tags_lower):
-            return "Perceivable"
-        if any("keyboard" in t or "nav" in t or "focus" in t or "target" in t or "motor" in t or "pointer" in t or "input-modalities" in t for t in tags_lower):
-            return "Operable"
-        if any("forms" in t or "label" in t or "predict" in t or "understand" in t or "cognitive" in t or "language" in t for t in tags_lower):
-            return "Understandable"
-        if any("aria" in t or "parsing" in t or "neural" in t or "compatible" in t for t in tags_lower):
-            return "Robust"
-
-        # 4. Check WCAG numbers in tags (e.g. wcag143 -> 1.4.3 -> Perceivable)
+        # 3. Check WCAG numbers in tags (e.g. wcag143 -> 1.4.3 -> Perceivable, or 2.5.5 -> Operable)
         for t in tags_lower:
-            if t.startswith("wcag") or "wcag-" in t:
-                if t in ["wcag2a", "wcag2aa", "wcag2aaa", "wcag21a", "wcag21aa", "wcag21aaa", "wcag22a", "wcag22aa", "wcag22aaa"]:
-                    continue
-                num_part = "".join(c for c in t if c.isdigit() or c == ".")
-                if num_part:
-                    if num_part.startswith("1"):
-                        return "Perceivable"
-                    elif num_part.startswith("2"):
-                        return "Operable"
-                    elif num_part.startswith("3"):
-                        return "Understandable"
-                    elif num_part.startswith("4"):
-                        return "Robust"
+            if t in ["wcag2a", "wcag2aa", "wcag2aaa", "wcag21a", "wcag21aa", "wcag21aaa", "wcag22a", "wcag22aa", "wcag22aaa"]:
+                continue
+            
+            # Extract clean criterion representation (remove wcag prefix)
+            clean_tag = t.replace("wcag", "").replace("-", "").strip()
+            if clean_tag and clean_tag[0].isdigit():
+                # Filter to only numbers and dots
+                clean_tag_digits = "".join(c for c in clean_tag if c.isdigit() or c == ".")
+                if clean_tag_digits:
+                    first_digit = clean_tag_digits[0]
+                    if first_digit in cls.WCAG_PRINCIPLES:
+                        return cls.WCAG_PRINCIPLES[first_digit]
+
+        # 4. Check tags for key indicators based on substrings
+        for principle, substrings in cls.RULE_SUBSTRINGS.items():
+            if any(sub in t for t in tags_lower for sub in substrings):
+                return principle
 
         # 5. Check Rule ID substrings
-        if any(x in rule_id_lower for x in ["color", "contrast", "alt", "text", "sensory", "visual", "image", "heading", "title", "media", "audio", "video"]):
-            return "Perceivable"
-        if any(x in rule_id_lower for x in ["keyboard", "tab", "focus", "target", "nav", "motor", "pointer", "size", "link", "bypass", "skip", "scroll"]):
-            return "Operable"
-        if any(x in rule_id_lower for x in ["label", "form", "predict", "cognitive", "lang", "input", "error", "valid"]):
-            return "Understandable"
-        if any(x in rule_id_lower for x in ["aria", "parsing", "neural", "role", "value", "id", "duplicate"]):
-            return "Robust"
+        for principle, substrings in cls.RULE_SUBSTRINGS.items():
+            if any(sub in rule_id_lower for sub in substrings):
+                return principle
 
-        # 6. Axe Category Prefixes fallback
-        if any(t in tags_lower for t in ["cat.color", "cat.contrast", "cat.text-alternatives", "cat.sensory-and-visual-cues", "cat.time-and-media", "cat.semantics"]):
-            return "Perceivable"
-        if any(t in tags_lower for t in ["cat.keyboard", "cat.labels", "cat.navigation", "cat.structure", "cat.language", "cat.title"]):
-            return "Operable"
-        if any(t in tags_lower for t in ["cat.forms"]):
-            return "Understandable"
-        if any(t in tags_lower for t in ["cat.aria", "cat.parsing", "cat.name-role-value"]):
-            return "Robust"
+        # 6. Fallback to Agent Type name if nothing else classified the issue
+        if agent_lower in cls.AGENT_CATEGORIES:
+            return cls.AGENT_CATEGORIES[agent_lower]
             
         return "General Accessibility"
 
-    @staticmethod
-    def get_severity_matrix(impact: ImpactLevel) -> str:
+
+    @classmethod
+    def get_severity_matrix(cls, impact: ImpactLevel) -> str:
         """Transforms impact levels into a multi-dimensional severity matrix descriptor."""
         val = impact.value if hasattr(impact, 'value') else str(impact).lower()
-        
-        mapping = {
-            "critical": "Critical (High-Friction / Legal Risk)",
-            "serious": "Serious (Significant Barrier)",
-            "moderate": "Moderate (Inconvenience)",
-            "minor": "Minor (Best Practice)"
-        }
-        return mapping.get(val, "Unclassified")
+        return cls.SEVERITY_DESCRIPTIONS.get(val, "Unclassified")
 
     @classmethod
     def enhance_violation(cls, violation_data: Dict):

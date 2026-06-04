@@ -17,14 +17,14 @@ from typing import List
 from auditor.domain.agent_finding import AgentFinding # type: ignore
 from auditor.infrastructure.data_extractor import PageData # type: ignore
 from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
-from auditor.application.agents.rules.motor_rules import is_target_too_small # type: ignore
+from auditor.application.agents.rules.motor_rules import is_target_too_small, is_keyboard_trap_candidate # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 
 
 class MotorAgent(IAccessibilityAgent):
     """
     Accessibility agent for motor disabilities.
-    Detects physical hurdles like small interactive targets.
+    Detects physical hurdles like small interactive targets and keyboard roadblocks.
     """
 
     def __init__(self) -> None:
@@ -39,7 +39,7 @@ class MotorAgent(IAccessibilityAgent):
         self.logger.info(f"Motor Agent analyzing: {page_data.url}")
         findings = []
 
-        # Check ALL Links for Target Size (WCAG G44)
+        # Check ALL Links for Target Size (WCAG G44) & Keyboard accessibility
         for i, link in enumerate(page_data.links):
             if i < 5:
                 self.logger.info(f"DEBUG: Link {i} bbox: {link.bounding_box}")
@@ -58,8 +58,24 @@ class MotorAgent(IAccessibilityAgent):
                     wcag_criterion="2.5.5",
                     session_id=str(page_data.session_id)
                 ))
+            
+            if is_keyboard_trap_candidate(link.attributes):
+                findings.append(AgentFinding(
+                    agent="motor",
+                    violation_type="keyboard",
+                    guideline="G21",
+                    element=link.html,
+                    selector=link.selector,
+                    issue="Interactive link is removed from tab focus flow (tabindex < 0).",
+                    impact="Keyboard-only users and those with assistive switch devices cannot navigate or activate this link.",
+                    fix="Remove tabindex='-1' or change it to tabindex='0' to restore standard keyboard focusability.",
+                    confidence=0.85,
+                    source="rule",
+                    wcag_criterion="2.1.1",
+                    session_id=str(page_data.session_id)
+                ))
 
-        # Check Form Elements (Inputs/Buttons) for Target Size
+        # Check Form Elements (Inputs/Buttons) for Target Size & Keyboard accessibility
         for form in page_data.form_elements:
             if is_target_too_small(form.bounding_box):
                 findings.append(AgentFinding(
@@ -74,6 +90,22 @@ class MotorAgent(IAccessibilityAgent):
                     confidence=0.90,
                     source="rule",
                     wcag_criterion="2.5.5",
+                    session_id=str(page_data.session_id)
+                ))
+            
+            if is_keyboard_trap_candidate(form.attributes):
+                findings.append(AgentFinding(
+                    agent="motor",
+                    violation_type="keyboard",
+                    guideline="G21",
+                    element=form.html,
+                    selector=form.selector,
+                    issue="Form element is removed from tab focus flow (tabindex < 0).",
+                    impact="Users navigating purely via keyboard or physical switches will bypass this interactive field entirely, preventing form completion.",
+                    fix="Remove tabindex='-1' or set tabindex='0' on this interactive element.",
+                    confidence=0.85,
+                    source="rule",
+                    wcag_criterion="2.1.1",
                     session_id=str(page_data.session_id)
                 ))
 

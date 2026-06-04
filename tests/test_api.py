@@ -74,7 +74,14 @@ def test_api_dashboard_summary():
     mock_session.violations = [mock_violation]
     mock_list_recent.return_value = [mock_session]
     
-    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.list_recent_sessions", mock_list_recent):
+    mock_get_violations = AsyncMock(return_value=[{
+        "impact": "critical",
+        "category": "perceivable",
+        "nodes": [{"impact": "critical"}]
+    }])
+    
+    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.list_recent_sessions", mock_list_recent), \
+         patch("auditor.presentation.api.get_audit_violations", mock_get_violations):
         response = client.get("/api/dashboard/summary")
         assert response.status_code == 200
         data = response.json()
@@ -197,7 +204,13 @@ def test_api_dashboard_summary_with_all_viol_types():
     session_1.violations = [v1, v2]
     mock_list_recent.return_value = [session_1]
     
-    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.list_recent_sessions", mock_list_recent):
+    mock_get_violations = AsyncMock(return_value=[
+        {"impact": "serious", "category": "perceivable", "nodes": [{"impact": "serious"}]},
+        {"impact": "minor", "category": "operable", "nodes": [{"impact": "minor"}]}
+    ])
+    
+    with patch("auditor.presentation.api.SqlAlchemyAuditRepository.list_recent_sessions", mock_list_recent), \
+         patch("auditor.presentation.api.get_audit_violations", mock_get_violations):
         response = client.get("/api/dashboard/summary")
         assert response.status_code == 200
         data = response.json()
@@ -484,6 +497,57 @@ def test_api_export_logs_missing():
         response = client.get("/api/user/export-logs")
         assert response.status_code == 200
         assert "No logs recorded yet." in response.text
+
+
+def test_api_get_violation_endpoint():
+    # 1. Test invalid UUID format -> 400
+    response = client.get("/api/violations/not-a-uuid")
+    assert response.status_code == 400
+    assert "Invalid violation ID" in response.json()["detail"]
+
+    # 2. Test violation not found -> 404
+    mock_exec = MagicMock()
+    mock_exec.first = MagicMock(return_value=None)
+    mock_exec.all = MagicMock(return_value=[])
+    
+    mock_db_session = MagicMock()
+    mock_db_session.exec = AsyncMock(return_value=mock_exec)
+    
+    mock_db_context = AsyncMock()
+    mock_db_context.__aenter__.return_value = mock_db_session
+    
+    with patch("auditor.presentation.api.AsyncSession", return_value=mock_db_context):
+        response = client.get(f"/api/violations/{uuid.uuid4()}")
+        assert response.status_code == 404
+        assert "Violation not found" in response.json()["detail"]
+        
+    # 3. Test violation found (direct lookup) -> 200
+    mock_violation = MagicMock()
+    mock_violation.id = uuid.uuid4()
+    mock_violation.session_id = uuid.uuid4()
+    mock_violation.rule_id = "color-contrast"
+    mock_violation.selector = "div > p"
+    mock_violation.description = "Low contrast"
+    mock_violation.nodes = [{"html": "<span>text</span>", "target": "span", "failure_summary": "low contrast"}]
+    
+    mock_exec_found = MagicMock()
+    mock_exec_found.first = MagicMock(return_value=mock_violation)
+    mock_exec_found.all = MagicMock(return_value=[mock_violation])
+    
+    mock_db_session_found = MagicMock()
+    mock_db_session_found.exec = AsyncMock(return_value=mock_exec_found)
+    
+    mock_db_context_found = AsyncMock()
+    mock_db_context_found.__aenter__.return_value = mock_db_session_found
+    
+    with patch("auditor.presentation.api.AsyncSession", return_value=mock_db_context_found):
+        response = client.get(f"/api/violations/{mock_violation.id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == str(mock_violation.id)
+        assert data["rule_id"] == "color-contrast"
+        assert "fix" in data
+
 
 
 

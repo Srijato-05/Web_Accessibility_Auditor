@@ -89,7 +89,8 @@ EXTRACT_LINKS_JS = """() => {
             attributes: {
                 href: el.getAttribute('href') || '',
                 role: el.getAttribute('role') || '',
-                ariaLabel: el.getAttribute('aria-label') || ''
+                ariaLabel: el.getAttribute('aria-label') || '',
+                tabindex: el.getAttribute('tabindex') || ''
             },
             boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
             parentStyles: {
@@ -128,7 +129,8 @@ EXTRACT_TEXT_ELEMENTS_JS = """() => {
                 borderBottomColor: style.borderBottomColor,
                 borderBottomWidth: style.borderBottomWidth,
                 outlineWidth: style.outlineWidth,
-                display: style.display
+                display: style.display,
+                textAlign: style.textAlign || ''
             },
             attributes: {
                 role: el.getAttribute('role') || '',
@@ -180,13 +182,16 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
                 boxShadow: style.boxShadow
             },
             attributes: {
+                id: el.id || '',
                 type: el.getAttribute('type') || '',
                 name: el.getAttribute('name') || '',
+                autocomplete: el.getAttribute('autocomplete') || '',
                 required: el.hasAttribute('required') ? 'true' : '',
                 ariaInvalid: el.getAttribute('aria-invalid') || '',
                 ariaRequired: el.getAttribute('aria-required') || '',
                 ariaDescribedby: el.getAttribute('aria-describedby') || '',
-                className: el.className && typeof el.className === 'string' ? el.className : ''
+                className: el.className && typeof el.className === 'string' ? el.className : '',
+                tabindex: el.getAttribute('tabindex') || ''
             },
             boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
             parentStyles: {

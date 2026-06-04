@@ -66,6 +66,76 @@ class AuditService:
         # --- TEAM ANTIGRAVITY ---
         self.tg_repo = Neo4jRepository()
 
+    def _is_duplicate_finding(self, af: Any, existing_violations: List[Violation]) -> bool:
+        """
+        Deduplicates agent findings against AXE-core standard violations dynamically
+        by comparing element selectors and matching WCAG Success Criteria references.
+        """
+        af_sel = af.selector.strip().lower() if af.selector else ""
+        if not af_sel:
+            return False
+            
+        # Get normalized representation of the agent's WCAG criterion (e.g., "1.4.3" -> "143")
+        af_criterion = ""
+        if hasattr(af, "wcag_criterion") and af.wcag_criterion:
+            af_criterion = "".join(c for c in str(af.wcag_criterion) if c.isdigit())
+            
+        af_guideline = "".join(c for c in str(af.guideline) if c.isdigit()) if af.guideline else ""
+        
+        af_html = af.element.strip().lower() if af.element else ""
+        
+        for v in existing_violations:
+            # 1. Check if they target the same element (via selector similarity or HTML snippet overlap)
+            selector_matched = False
+            v_sel = v.selector.strip().lower() if v.selector else ""
+            if v_sel and af_sel:
+                if v_sel == af_sel or v_sel in af_sel or af_sel in v_sel:
+                    selector_matched = True
+            
+            if not selector_matched:
+                for node in (v.nodes or []):
+                    targets = node.get("target") or []
+                    if isinstance(targets, list):
+                        for target in targets:
+                            t_str = str(target).strip().lower()
+                            if t_str == af_sel or t_str in af_sel or af_sel in t_str:
+                                selector_matched = True
+                                break
+                    elif isinstance(targets, str):
+                        t_str = targets.strip().lower()
+                        if t_str == af_sel or t_str in af_sel or af_sel in t_str:
+                            selector_matched = True
+                            break
+                    if selector_matched:
+                        break
+            
+            element_matched = False
+            if af_html:
+                for node in (v.nodes or []):
+                    node_html = node.get("html", "").strip().lower()
+                    if node_html and (af_html in node_html or node_html in af_html):
+                        element_matched = True
+                        break
+            
+            if not (selector_matched or element_matched):
+                continue
+                
+            # 2. Extract numerical WCAG parts from AXE violation tags (e.g. ["wcag143"] -> {"143"})
+            v_criteria = set()
+            for t in (v.tags or []):
+                t_clean = t.replace("wcag", "").replace("-", "").strip()
+                t_num = "".join(c for c in t_clean if c.isdigit())
+                if t_num:
+                    v_criteria.add(t_num)
+                    
+            # 3. Check if agent WCAG criterion or guideline matches AXE criteria tags
+            if af_criterion and af_criterion in v_criteria:
+                return True
+            if af_guideline and af_guideline in v_criteria:
+                return True
+                    
+        return False
+
     # --------------------------------------------------------------------------
     # CORE MISSION: THE SECURE AUDIT PIPELINE
     # --------------------------------------------------------------------------
@@ -163,10 +233,18 @@ class AuditService:
                     for af in agent_findings:
                         self.logger.info(f"AGENT FINDING [{af.agent.upper()}]: {af.issue} at {af.selector}")
                         
+                        # Apply forensic deduplication against AXE-core standard violations
+                        if self._is_duplicate_finding(af, violations):
+                            self.logger.info(f"DEDUPLICATOR: Skipping duplicate agent finding [{af.agent.upper()} - {af.guideline}] at {af.selector} (Already caught by AXE)")
+                            continue
+
                         agent_type = af.agent.lower()
                         impact = ImpactLevel.SERIOUS if af.confidence > 0.8 else ImpactLevel.MODERATE
                         # Derive tags if possible from guideline
                         tags = [f"wcag{af.guideline}"] # Rough heuristic, but better than nothing
+                        if hasattr(af, "wcag_criterion") and af.wcag_criterion:
+                            tags.append(f"wcag{af.wcag_criterion}")
+                            tags.append(af.wcag_criterion)
                         
                         v = Violation(
                             rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
@@ -185,16 +263,16 @@ class AuditService:
                         v.selector = af.selector
                         violations.append(v)
                     
-                    # Store high-level agent summary in the session metadata
+                    # Store high-level agent summary in the session metadata (recalculated from non-duplicate additions)
                     session.agent_summary = { # type: ignore
-                        "visual_count": len([af for af in agent_findings if af.agent == 'visual']),
-                        "motor_count": len([af for af in agent_findings if af.agent == 'motor']),
-                        "cognitive_count": len([af for af in agent_findings if af.agent == 'cognitive']),
-                        "neural_count": len([af for af in agent_findings if af.agent == 'neural']),
-                        "primary_risk": agent_findings[0].issue if agent_findings else "None Detected"
+                        "visual_count": len([v for v in violations if v.agent == 'visual']),
+                        "motor_count": len([v for v in violations if v.agent == 'motor']),
+                        "cognitive_count": len([v for v in violations if v.agent == 'cognitive']),
+                        "neural_count": len([v for v in violations if v.agent == 'neural']),
+                        "primary_risk": next((v.description for v in violations if v.agent != 'axe'), "None Detected")
                     }
                     
-                    self.logger.info(f"Agent analysis complete. Total Mission Findings: {len(agent_findings)} Agent Violations added.")
+                    self.logger.info(f"Agent analysis complete. Total Agent Violations added after deduplication: {sum(1 for v in violations if v.agent != 'axe')}")
                 except Exception as ae:
                     self.logger.warning(f"Accessibility Agents Hub Failure: {ae}")
             # -------------------------------------

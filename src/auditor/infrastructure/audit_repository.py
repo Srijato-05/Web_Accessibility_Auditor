@@ -283,7 +283,7 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             # Check violations table for Phase XII fields
             res = await self.db_session.exec(text("PRAGMA table_info(violations)"))
             cols = [row[1] for row in res.fetchall()]
-            for field in ["agent", "compliance_level", "category", "severity_matrix"]:
+            for field in ["agent", "compliance_level", "category", "severity_matrix", "url"]:
                 if field not in cols:
                     self.logger.warning(f"SCHEMA MISMATCH: Column '{field}' missing in 'violations'. Migrating...")
                     await self.db_session.exec(text(f"ALTER TABLE violations ADD COLUMN {field} TEXT"))
