@@ -265,6 +265,10 @@ async def get_audit_violations(audit_id: str):
             # Categorization Logic for Insights.tsx (dynamically calculated for reliability)
             from auditor.shared.compliance_mapper import ComplianceMapper
             cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+            
+            comp_level = getattr(v, 'compliance_level', None)
+            if not comp_level or comp_level == "Non-Standard":
+                comp_level = ComplianceMapper.get_compliance_level(v.tags or [], v.impact)
                 
             category = None
             cat_lower = cat_name.lower()
@@ -342,7 +346,8 @@ async def get_audit_violations(audit_id: str):
                     "type": v.rule_id,
                     "message": v.description,
                     "category": category,
-                    "agent": v.agent or "axe"
+                    "agent": v.agent or "axe",
+                    "compliance_level": comp_level or "Non-Standard"
                     # --- END FRONTEND ALIASES ---
                 }
         
