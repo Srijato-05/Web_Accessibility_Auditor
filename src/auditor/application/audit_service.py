@@ -246,11 +246,12 @@ class AuditService:
                             tags.append(f"wcag{af.wcag_criterion}")
                             tags.append(af.wcag_criterion)
                         
+                        issue_clean = str(af.issue).rstrip(".")
                         v = Violation(
                             rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
                             impact=impact,
                             agent=agent_type,
-                            description=f"[{af.agent.upper()} AGENT] {af.issue}. Fix Recommended: {af.fix}",
+                            description=f"[{af.agent.upper()} AGENT] {issue_clean}. Fix Recommended: {af.fix}",
                             help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}",
                             session_id=session.id, # type: ignore
                             tags=tags,
@@ -260,7 +261,7 @@ class AuditService:
                             url=url,
                             confidence_score=af.confidence
                         )
-                        v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue}]
+                        v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue, "fix": af.fix}]
                         v.selector = af.selector
                         violations.append(v)
                     

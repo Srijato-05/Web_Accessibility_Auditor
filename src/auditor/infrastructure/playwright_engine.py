@@ -2326,6 +2326,51 @@ class PlaywrightEngine(IBrowserEngine):
                 return currentBg;
             }
 
+            function getUniqueSelector(el) {
+                if (!(el instanceof Element)) return "";
+                const path = [];
+                let current = el;
+                while (current && current.nodeType === Node.ELEMENT_NODE) {
+                    let selector = current.nodeName.toLowerCase();
+                    if (current.id) {
+                        selector += '#' + current.id;
+                        path.unshift(selector);
+                        break;
+                    } else {
+                        let sib = current, nth = 1;
+                        while (sib = sib.previousElementSibling) {
+                            if (sib.nodeName.toLowerCase() === selector) nth++;
+                        }
+                        if (nth > 1) {
+                            selector += `:nth-of-type(${nth})`;
+                        } else {
+                            let nextSib = current;
+                            let hasNext = false;
+                            while (nextSib = nextSib.nextElementSibling) {
+                                if (nextSib.nodeName.toLowerCase() === selector) {
+                                    hasNext = true;
+                                    break;
+                                }
+                            }
+                            if (hasNext) selector += ":nth-of-type(1)";
+                        }
+                    }
+                    path.unshift(selector);
+                    current = current.parentElement;
+                }
+                return path.join(' > ');
+            }
+
+            function getElementSignature(el) {
+                if (!el) return "";
+                try {
+                    const clone = el.cloneNode(false);
+                    return clone.outerHTML || el.tagName.toLowerCase();
+                } catch (e) {
+                    return el.tagName.toLowerCase();
+                }
+            }
+
             const elements = Array.from(document.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, a'));
             const issues = [];
             
@@ -2387,7 +2432,9 @@ class PlaywrightEngine(IBrowserEngine):
                         ratio: ratio,
                         threshold: threshold,
                         fontSize: style.fontSize,
-                        tagName: el.tagName
+                        tagName: el.tagName,
+                        outerHTML: getElementSignature(el),
+                        fullSelector: getUniqueSelector(el)
                     });
                 }
             });
@@ -2397,13 +2444,20 @@ class PlaywrightEngine(IBrowserEngine):
         
         results = await page.evaluate(contrast_script)
         for res in results:
+            html_sig = res.get("outerHTML") or f"<{res['tagName'].lower()}>"
+            selector_sig = res.get("fullSelector") or f"{res['tagName']}[text='{res['text']}']"
             violations.append(Violation(
                 rule_id="ENGINE-COLOR-001",
                 description=f"Low contrast perception detected ({res['ratio']:.2f}:1). Threshold is {res['threshold']}:1.",
                 impact=ImpactLevel.SERIOUS,
-                selector=f"{res['tagName']}[text='{res['text']}']",
+                selector=selector_sig,
                 help_url="https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum",
-                nodes=[{"html": res["text"], "target": res["tagName"]}],
+                nodes=[{
+                    "html": html_sig,
+                    "target": selector_sig,
+                    "failure_summary": f"Text contrast of {res['ratio']:.2f}:1 is below the required threshold of {res['threshold']}:1.",
+                    "fix": "Increase the contrast ratio between the text color and background color to meet the minimum WCAG threshold (4.5:1 for normal text, 3.0:1 for large text)."
+                }],
                 tags=["color", "contrast", "wcag-1.4.3"],
                 session_id=self.session_id,
                 agent="visual"
@@ -2424,6 +2478,51 @@ class PlaywrightEngine(IBrowserEngine):
         
         target_script = """
         () => {
+            function getUniqueSelector(el) {
+                if (!(el instanceof Element)) return "";
+                const path = [];
+                let current = el;
+                while (current && current.nodeType === Node.ELEMENT_NODE) {
+                    let selector = current.nodeName.toLowerCase();
+                    if (current.id) {
+                        selector += '#' + current.id;
+                        path.unshift(selector);
+                        break;
+                    } else {
+                        let sib = current, nth = 1;
+                        while (sib = sib.previousElementSibling) {
+                            if (sib.nodeName.toLowerCase() === selector) nth++;
+                        }
+                        if (nth > 1) {
+                            selector += `:nth-of-type(${nth})`;
+                        } else {
+                            let nextSib = current;
+                            let hasNext = false;
+                            while (nextSib = nextSib.nextElementSibling) {
+                                if (nextSib.nodeName.toLowerCase() === selector) {
+                                    hasNext = true;
+                                    break;
+                                }
+                            }
+                            if (hasNext) selector += ":nth-of-type(1)";
+                        }
+                    }
+                    path.unshift(selector);
+                    current = current.parentElement;
+                }
+                return path.join(' > ');
+            }
+
+            function getElementSignature(el) {
+                if (!el) return "";
+                try {
+                    const clone = el.cloneNode(false);
+                    return clone.outerHTML || el.tagName.toLowerCase();
+                } catch (e) {
+                    return el.tagName.toLowerCase();
+                }
+            }
+
             const targets = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"]'));
             const issues = [];
             
@@ -2473,7 +2572,9 @@ class PlaywrightEngine(IBrowserEngine):
                         text: d.el.innerText.substring(0, 20).trim(),
                         isCollision: collisionFound,
                         collisionInfo: nearestTgtInfo,
-                        selector: d.el.tagName.toLowerCase() + (d.el.id ? '#' + d.el.id : '')
+                        selector: d.el.tagName.toLowerCase() + (d.el.id ? '#' + d.el.id : ''),
+                        outerHTML: getElementSignature(d.el),
+                        fullSelector: getUniqueSelector(d.el)
                     });
                 }
             });
@@ -2482,14 +2583,21 @@ class PlaywrightEngine(IBrowserEngine):
         """
         small_targets = await page.evaluate(target_script)
         for t in small_targets:
+            html_sig = t.get("outerHTML") or f"<{t['tag'].lower()}>"
+            selector_sig = t.get("fullSelector") or t['selector']
             if t['isCollision']:
                 violations.append(Violation(
                     rule_id="ENGINE-INTERACT-008",
                     description=f"Touch target size collision hazard: Small target size ({round(t['w'])}x{round(t['h'])}px) is closer than 24px center-to-center from adjacent target '{t['collisionInfo']}'.",
                     impact=ImpactLevel.SERIOUS,
-                    selector=t['selector'],
+                    selector=selector_sig,
                     help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html",
-                    nodes=[{"html": t["text"], "target": t["tag"]}],
+                    nodes=[{
+                        "html": html_sig,
+                        "target": selector_sig,
+                        "failure_summary": f"Touch target ({round(t['w'])}x{round(t['h'])}px) is positioned too close to another interactive element.",
+                        "fix": "Increase spacing between adjacent touch targets or increase target size to ensure at least 24px center-to-center distance under WCAG Level AA."
+                    }],
                     tags=["interaction", "targets", "spacing", "wcag-2.5.8"],
                     session_id=self.session_id,
                     agent="motor"
@@ -2499,9 +2607,14 @@ class PlaywrightEngine(IBrowserEngine):
                     rule_id="ENGINE-INTERACT-005",
                     description=f"Sub-optimal target size detected ({t['w']}x{t['h']}px). Recommended minimum for Level AAA is 44x44px.",
                     impact=ImpactLevel.MINOR,
-                    selector=t['selector'],
+                    selector=selector_sig,
                     help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-enhanced",
-                    nodes=[{"html": t["text"], "target": t["tag"]}],
+                    nodes=[{
+                        "html": html_sig,
+                        "target": selector_sig,
+                        "failure_summary": f"Interactive target size ({round(t['w'])}x{round(t['h'])}px) is below the recommended 44x44px minimum threshold.",
+                        "fix": "Increase target size to at least 44x44px or add padding/spacing to ensure easy pointer interaction under WCAG Level AAA."
+                    }],
                     tags=["interaction", "targets", "wcag-2.5.5"],
                     session_id=self.session_id,
                     agent="motor"
