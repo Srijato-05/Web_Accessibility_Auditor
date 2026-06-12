@@ -75,7 +75,8 @@ class CrawlService:
         self.skip_external = settings.get("skip_external", True)
         self._semaphore = asyncio.Semaphore(self.concurrency)
         
-        self.visited_urls: Set[str] = set()
+        # Phase IX: Hashed ledger for O(1) Billion-Scale Memory Efficiency
+        self.visited_url_hashes: Set[int] = set()
         self.discovered_count = 0
         self.success_count = 0
         self.failed_count = 0
@@ -107,7 +108,7 @@ class CrawlService:
         # PRIORITY QUEUE: root=0, depth_1=10, depth_2=20
         queue = asyncio.PriorityQueue()
         await queue.put((0, start_url, 0)) 
-        self.visited_urls.add(self._normalize_url(start_url))
+        self.visited_url_hashes.add(hash(self._normalize_url(start_url)))
 
         tasks: List[asyncio.Task] = []
         
@@ -245,8 +246,9 @@ class CrawlService:
                             })
                         # -------------------------------------
 
-                        if normalized not in self.visited_urls and self._is_internal(start_url=url, target_url=normalized):
-                            self.visited_urls.add(normalized)
+                        url_hash = hash(normalized)
+                        if url_hash not in self.visited_url_hashes and self._is_internal(start_url=url, target_url=normalized):
+                            self.visited_url_hashes.add(url_hash)
                             # Depth-based priority calculation
                             new_priority = (depth + 1) * 10
                             await queue.put((new_priority, normalized, depth + 1))

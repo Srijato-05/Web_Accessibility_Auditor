@@ -124,6 +124,8 @@ class AuditReporter:
                     "tags": v.tags or [],
                     "agent": v.agent or "axe",
                     "url": v.url,
+                    "confidence_score": v.confidence_score if hasattr(v, 'confidence_score') else None,
+                    "verification_status": v.verification_status if hasattr(v, 'verification_status') else "unverified",
                     "nodes": nodes_list
                 }
 
@@ -139,6 +141,8 @@ class AuditReporter:
                     "help_url": g_val["help_url"],
                     "tags": g_val["tags"],
                     "agent": g_val["agent"],
+                    "confidence_score": g_val.get("confidence_score"),
+                    "verification_status": g_val.get("verification_status", "unverified"),
                     "compliance_level": node.get("compliance_level", "N/A"),
                     "category": node.get("category", "General"),
                     "severity_matrix": node.get("impact", "minor").capitalize(),
@@ -163,6 +167,7 @@ class AuditReporter:
         # 3b. Compute Forensic Matrix (Agents vs Principles)
         matrix = {
             "axe": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
+            "htmlcs": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
             "visual": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
             "motor": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
             "cognitive": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0},
@@ -331,7 +336,7 @@ class AuditReporter:
                 <div class="card-header">
                     <span class="badge {(v.get('compliance_level') or 'Non-Standard').lower().replace(' ', '-')}">{v.get('severity_matrix') or 'Unclassified'}</span>
                     <span class="compliance-badge">{v.get('compliance_level') or 'N/A'}</span>
-                    <span class="agent-badge">{(v.get('agent') or 'axe').upper()}</span>
+                    <span class="agent-badge {(v.get('agent') or 'axe').lower()}">{(v.get('agent') or 'axe').upper()}</span>
                     <span class="rule-id">{v.get('rule_id')}</span>
                 </div>
                 <div class="category-tag">{cat_display}</div>
@@ -355,7 +360,7 @@ class AuditReporter:
                 <div class="matrix-header">Understandable</div>
                 <div class="matrix-header">Robust</div>
         """
-        for agent in ["axe", "visual", "motor", "cognitive", "neural"]:
+        for agent in ["axe", "htmlcs", "visual", "motor", "cognitive", "neural"]:
             principles = data["matrix"].get(agent, {})
             matrix_html += f'<div class="matrix-row-label">{agent.upper()}</div>'
             for principle in ["Perceivable", "Operable", "Understandable", "Robust"]:
@@ -502,6 +507,16 @@ class AuditReporter:
             font-weight: 700;
             margin-right: 8px;
             border: 1px solid rgba(16, 185, 129, 0.3);
+        }}
+        .agent-badge.axe {{
+            background: rgba(71, 85, 105, 0.1);
+            color: #475569;
+            border: 1px solid rgba(71, 85, 105, 0.3);
+        }}
+        .agent-badge.htmlcs {{
+            background: rgba(217, 119, 6, 0.1);
+            color: #d97706;
+            border: 1px solid rgba(217, 119, 6, 0.3);
         }}
 
         .badge.below-a {{

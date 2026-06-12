@@ -1,8 +1,8 @@
 """
 NEURAL ACCESSIBILITY AGENT
 ==========================
-Uses a local LLM via Hugging Face Transformers to detect complex
-semantic and cognitive barriers.
+Analyzes the interface for cognitive overload, motion-induced nausea, and seizure risks.
+WCAG Focus: 2.2.2 Pause, Stop, Hide; 2.3.1 Three Flashes or Below Threshold.
 """
 
 import os
@@ -13,164 +13,186 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-import json
-from typing import List, Optional, Any, cast, Dict
-import asyncio
-import re
+from typing import List
 from auditor.domain.agent_finding import AgentFinding # type: ignore
 from auditor.infrastructure.data_extractor import PageData # type: ignore
 from auditor.domain.interfaces import IAccessibilityAgent # type: ignore
 from auditor.shared.logging import auditor_logger # type: ignore
 
-# Lazy Loading for Heavy AI Libraries
-torch = None
-pipeline = None
-
-def _lazy_load_ml():
-    global torch, pipeline
-    if torch is None or pipeline is None:
-        try:
-            import torch as _torch # type: ignore
-            from transformers import pipeline as _pipeline # type: ignore
-            torch = _torch
-            pipeline = _pipeline
-        except ImportError:
-            torch = False
-            pipeline = False
 
 class NeuralAgent(IAccessibilityAgent):
     """
-    Agentic AI Auditor (Local Mode).
-    Specializes in Link Purpose, Semantic Clarity, and Cluttered Layouts.
+    Advanced Heuristic Agent for Neural and Vestibular disorders.
+    Analyzes CSS animation entropy, kinetic load, and cognitive fatigue topologies.
     """
 
-    def __init__(self, model_id: str = "Qwen/Qwen2.5-1.5B-Instruct") -> None:
+    def __init__(self) -> None:
         self.logger = auditor_logger.getChild("Agent.Neural")
-        self.generator = None
-        self.model_id = model_id
-        
-        # Trigger lazy load only when instance is created
-        _lazy_load_ml()
-        
-        if not pipeline:
-            self.logger.warning("Neural Agent: transformers not installed or failed to load. Running in MOCK mode.")
-            return
-
-        try:
-            self.logger.info(f"Neural Agent: Loading local model {self.model_id}...")
-            # Auto-detects GPU (cuda) or falls back to cpu
-            is_cuda = False
-            if hasattr(torch, 'cuda') and torch.cuda.is_available(): # type: ignore
-                is_cuda = True
-                
-            device = 0 if is_cuda else -1
-            self.generator = pipeline(
-                "text-generation", 
-                model=self.model_id, 
-                model_kwargs={"dtype": torch.bfloat16 if is_cuda else torch.float32}, # type: ignore
-                device=device
-            )
-            self.logger.info("Neural Agent: Local Transformers Pipeline Initialized.")
-        except Exception as e:
-            self.logger.critical(f"Neural Agent Initialization Failed: {e}")
 
     @property
     def agent_name(self) -> str:
         return "neural"
 
     async def analyze(self, page_data: PageData) -> List[AgentFinding]:
-        """Performs AI-powered accessibility analysis."""
-        self.logger.info(f"Neural Agent analyzing: {page_data.url}")
-        
-        if not self.generator:
-            return self._get_mock_findings(page_data)
-
-        # 1. Prepare data for Prompt
-        links_summary = [
-            {"text": link.text, "html": link.html[:80]} 
-            for link in page_data.links[:50] # Top 50 links
-        ]
-        
-        # 2. Build Chat Prompt
-        messages = [
-            {"role": "system", "content": "You are a web accessibility auditor analyzing HTML links. Identify vague link texts (WCAG 2.4.4) or semantic confusion. Output ONLY a valid JSON array of objects. Do not wrap it in markdown. The objects must have keys: 'violation_type', 'guideline', 'element', 'selector', 'issue', 'impact', 'fix', 'confidence', 'wcag_criterion'."},
-            {"role": "user", "content": f"Analyze these elements:\n{json.dumps(links_summary, indent=2)}"}
-        ]
-        
+        """Performs advanced dynamic Neural accessibility analysis."""
+        self.logger.info(f"Neural Agent executing kinetic and cognitive overload heuristics on: {page_data.url}")
+        findings = []
         try:
-            # 3. Synchronous Gen wrapped in an asyncio thread to not block event loop
-            gen = cast(Any, self.generator)
-            if not hasattr(gen, 'tokenizer') or gen.tokenizer is None:
-                return []
-                
-            prompt = gen.tokenizer.apply_chat_template(
-                messages, 
-                tokenize=False, 
-                add_generation_prompt=True
-            )
-            
-            def run_inference(*args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
-                if not gen:
-                    return []
-                return cast(List[Dict[str, Any]], gen(
-                    prompt, 
-                    max_new_tokens=500, 
-                    temperature=0.1, 
-                    do_sample=False,
-                    return_full_text=False
-                ))
-                
-            response = await asyncio.to_thread(run_inference)
-            raw_text = response[0]["generated_text"].strip()
-            
-            # Clean up potential markdown formatting the model might spit out anyway
-            if raw_text.startswith("```json"):
-                raw_text = raw_text.replace("```json", "", 1)
-            if raw_text.endswith("```"):
-                raw_text = raw_text.rsplit("```", 1)[0]
-            raw_text = raw_text.strip()
-            
-            ai_data = json.loads(raw_text)
-            
-            findings = []
-            if isinstance(ai_data, list):
-                for item in ai_data:
-                    findings.append(AgentFinding(
-                        agent=self.agent_name,
-                        violation_type=item.get("violation_type", "predictability"),
-                        guideline=item.get("guideline", "G94"),
-                        element=item.get("element", "unknown"),
-                        selector=item.get("selector", "a"),
-                        issue=item.get("issue", "Semantic ambiguity detected by AI"),
-                        impact=item.get("impact", "High"),
-                        fix=item.get("fix", "Review context"),
-                        confidence=float(item.get("confidence", 0.8)),
-                        source="ml",
-                        wcag_criterion=item.get("wcag_criterion", "2.4.4"),
-                        session_id=page_data.session_id
-                    ))
-            return findings
-
+            findings.extend(self._analyze_kinetic_entropy(page_data))
         except Exception as e:
-            self.logger.error(f"Neural Agent Local Inference Failed: {e}")
-            return []
+            self.logger.error(f"Neural Kinetic Entropy Engine crash: {e}")
+            
+        try:
+            findings.extend(self._analyze_cognitive_fatigue(page_data))
+        except Exception as e:
+            self.logger.error(f"Neural Cognitive Fatigue Engine crash: {e}")
+            
+        try:
+            findings.extend(self._analyze_dynamic_kinetic_vectorization(page_data))
+        except Exception as e:
+            self.logger.error(f"Neural Kinetic Vectorization Engine crash: {e}")
 
-    def _get_mock_findings(self, page_data: PageData) -> List[AgentFinding]:
-        """Fallback findings if transformers fails to initialize."""
-        return [
-            AgentFinding(
-                agent=self.agent_name,
+        return findings
+
+    def _analyze_kinetic_entropy(self, page_data: PageData) -> List[AgentFinding]:
+        """
+        Dynamically analyzes animation and transition durations.
+        Flags elements with infinite animations or rapid flashing that trigger
+        vestibular disorders or seizures (WCAG 2.2.2, 2.3.1).
+        """
+        findings = []
+        
+        all_elements = page_data.links + page_data.form_elements + page_data.images + page_data.text_elements
+        
+        for el in all_elements:
+            styles = el.computed_styles
+            
+            animation_name = styles.get('animationName', 'none')
+            animation_duration = styles.get('animationDuration', '0s')
+            animation_iteration = styles.get('animationIterationCount', '1')
+            
+            if animation_name != 'none' and animation_duration != '0s':
+                # Check for Infinite loops (Vestibular trigger)
+                if animation_iteration == 'infinite':
+                    findings.append(AgentFinding(
+                        agent="neural",
+                        violation_type="motion",
+                        guideline="G4",
+                        element=el.html,
+                        selector=el.selector,
+                        issue=f"Infinite animation loop detected (animation-name: {animation_name}).",
+                        impact="Continuous movement or blinking causes severe distraction for users with ADHD and nausea for users with vestibular disorders.",
+                        fix="Ensure animations stop within 5 seconds or provide a global mechanism to pause/stop animations (e.g. prefers-reduced-motion media query).",
+                        confidence=0.95,
+                        source="heuristic",
+                        wcag_criterion="2.2.2",
+                        session_id=str(page_data.session_id)
+                    ))
+                
+                # Check for Rapid Flashing (Seizure risk - 3 flashes per second)
+                # If duration is < 0.33s (333ms) and it iterates multiple times
+                try:
+                    dur_val = float(animation_duration.replace('s', '').replace('ms', '').strip())
+                    if 'ms' in animation_duration:
+                        dur_val = dur_val / 1000.0
+                        
+                    if dur_val > 0 and dur_val <= 0.33 and (animation_iteration == 'infinite' or int(animation_iteration) > 3):
+                        findings.append(AgentFinding(
+                            agent="neural",
+                            violation_type="seizure",
+                            guideline="G19",
+                            element=el.html,
+                            selector=el.selector,
+                            issue=f"Rapid flashing animation detected (Duration: {dur_val}s, Iterations: {animation_iteration}).",
+                            impact="CRITICAL RISK: Flashing content >3 times per second can trigger photosensitive epileptic seizures.",
+                            fix="Increase animation duration to >0.5s or remove the animation entirely.",
+                            confidence=0.98,
+                            source="heuristic",
+                            wcag_criterion="2.3.1",
+                            session_id=str(page_data.session_id)
+                        ))
+                except ValueError:
+                    pass
+
+        return findings
+
+    def _analyze_cognitive_fatigue(self, page_data: PageData) -> List[AgentFinding]:
+        """
+        Analyzes the DOM for excessive dynamic interruption points (alert fatigue).
+        If a page has too many aria-live or alert regions, it becomes overwhelming.
+        """
+        findings = []
+        live_regions_count = 0
+        
+        all_elements = page_data.links + page_data.form_elements + page_data.images + page_data.text_elements
+        
+        for el in all_elements:
+            role = el.attributes.get('role', '')
+            aria_live = el.attributes.get('ariaLive', '')
+            
+            if role in ['alert', 'status', 'log', 'timer', 'marquee'] or aria_live in ['polite', 'assertive']:
+                live_regions_count += 1
+                
+        # Heuristic Threshold: More than 3 active live regions on a single page is highly overwhelming
+        if live_regions_count > 3:
+            findings.append(AgentFinding(
+                agent="neural",
                 violation_type="cognitive-complexity",
-                guideline="Understandable",
+                guideline="G193",
                 element="body",
                 selector="body",
-                issue="Neural Agent running in fallback/mock mode.",
-                impact="medium",
-                fix="Install transformers and download model to run full neural audits.",
-                confidence=0.5,
-                source="mock",
-                wcag_criterion="3.1.1",
-                session_id=page_data.session_id
-            )
-        ]
+                issue=f"Excessive dynamic interruption points detected ({live_regions_count} aria-live/alert regions).",
+                impact="Screen readers will constantly interrupt the user with updates from multiple sources, causing extreme cognitive overload and 'alert fatigue'.",
+                fix="Consolidate dynamic updates into fewer, unified status regions, or use aria-live='polite' strictly for critical changes.",
+                confidence=0.88,
+                source="heuristic",
+                wcag_criterion="4.1.3",
+                session_id=str(page_data.session_id)
+            ))
 
+        return findings
+
+    def _analyze_dynamic_kinetic_vectorization(self, page_data: PageData) -> List[AgentFinding]:
+        """
+        Phase X: Dynamic Kinetic Vectorization.
+        Computationally scans all transition and transform states for hyper-fast vestibular triggers.
+        """
+        findings = []
+        all_elements = page_data.links + page_data.form_elements + page_data.images + page_data.text_elements
+        
+        for el in all_elements:
+            styles = el.computed_styles
+            
+            # Vector 1: Hyper-fast Layout Shifts (Vestibular Trigger)
+            transition_duration = styles.get('transitionDuration', '0s')
+            transform = styles.get('transform', 'none')
+            
+            if transform != 'none' and transition_duration != '0s':
+                # If transition is less than 150ms on a structural shift, it triggers motion sickness
+                try:
+                    dur_val = float(transition_duration.split(',')[0].replace('s', '').replace('ms', '').strip())
+                    if 'ms' in transition_duration:
+                        dur_val = dur_val / 1000.0
+                        
+                    # Calculate bounding box area to see if it's a massive layout shift
+                    area = el.bounding_box.get('width', 0) * el.bounding_box.get('height', 0)
+                    
+                    if 0 < dur_val < 0.15 and area > 10000: # 100x100px or larger
+                        findings.append(AgentFinding(
+                            agent="neural",
+                            violation_type="vestibular_trigger",
+                            guideline="G4",
+                            element=el.html,
+                            selector=el.selector,
+                            issue=f"Hyper-fast kinetic shift detected on large element. Transition duration ({dur_val}s) is too fast for the applied transform on an area of {area}px.",
+                            impact="Rapid translation or scaling of large DOM elements triggers extreme motion sickness in users with vestibular disorders.",
+                            fix="Increase transition duration to >300ms, or use prefers-reduced-motion media query to disable the transform.",
+                            confidence=0.92,
+                            source="vector_engine",
+                            wcag_criterion="2.3.3",
+                            session_id=str(page_data.session_id)
+                        ))
+                except ValueError:
+                    pass
+                    
+        return findings

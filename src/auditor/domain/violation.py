@@ -27,3 +27,7 @@ class Violation:
     category: Optional[str] = None        # Perceivable, Operable, etc.
     severity_matrix: Optional[str] = None  # e.g., "Critical (Business Risk)"
     url: Optional[str] = None             # Source URL for crawler missions
+    
+    # Ground Truth Analytics (Phase VIII)
+    confidence_score: Optional[float] = None
+    verification_status: str = "unverified" # unverified, true_positive, false_positive, false_negative

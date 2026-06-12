@@ -58,6 +58,10 @@ class ViolationModel(SQLModel, table=True):
     severity_matrix: Optional[str] = None
     url: Optional[str] = None
     
+    # Ground Truth Analytics (Phase VIII)
+    confidence_score: Optional[float] = None
+    verification_status: str = Field(default="unverified")
+    
     session: Optional[AuditSessionModel] = Relationship(back_populates="violations")
 
 class TargetModel(SQLModel, table=True):

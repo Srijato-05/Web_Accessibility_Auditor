@@ -32,13 +32,15 @@ async def main():
     
     # Global Task Registry (Phase XIII)
     from auditor.infrastructure.task_model import task_metadata # type: ignore
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-        await conn.run_sync(task_metadata.create_all)
+    
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+            await conn.run_sync(task_metadata.create_all)
 
-    # 3. CLI Argument Handling
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print("""
+        # 3. CLI Argument Handling
+        if "--help" in sys.argv or "-h" in sys.argv:
+            print("""
 Accessibility Auditor Batch CLI [v0.1.0]
 Usage: python batch_audit.py [options]
 
@@ -50,11 +52,10 @@ Options:
   --discover [url]    Autonomously discover and dispatch audit targets from sitemaps/robots.txt
   --worker            Start an autonomous worker node to process the audit queue
   --dashboard         Launch the real-time TUI cluster monitor
-        """)
-        return
+            """)
+            return
 
-    if len(sys.argv) >= 3 and sys.argv[1] == "--add-target":
-        try:
+        if len(sys.argv) >= 3 and sys.argv[1] == "--add-target":
             async with AsyncSession(engine) as db_session:
                 batch_repo = SqlAlchemyTargetRepository(db_session)
                 target_url = sys.argv[2]
@@ -66,57 +67,35 @@ Options:
                 auditor_logger.info("Auto-Dispatching target to Autonomous Queue...")
                 batch_orchestrator = BatchAuditManager(engine)
                 await batch_orchestrator.dispatch_batch_audit()
-        except Exception as e:
-            auditor_logger.error(f"Failed to register/dispatch target: {e}")
-        finally:
-            await engine.dispose()
-        return
+            return
 
-    if "--dispatch" in sys.argv:
-        try:
+        if "--dispatch" in sys.argv:
             batch_orchestrator = BatchAuditManager(engine)
             await batch_orchestrator.dispatch_batch_audit()
-        except Exception as e:
-            auditor_logger.critical(f"Dispatch Failure: {e}")
-        finally:
-            await engine.dispose()
-        return
+            return
 
-
-
-    if "--discover" in sys.argv:
-        try:
+        if "--discover" in sys.argv:
             target_index = sys.argv.index("--discover") + 1
             if target_index < len(sys.argv):
                 queue = RedisTaskQueue(db_engine=engine)
                 link_extractor = PlaywrightLinkExtractor()
                 crawler = LinkDiscoveryService(link_extractor)
-                
-                async with AsyncSession(engine) as db_session:
-                    repo = SqlAlchemyTargetRepository(db_session)
-                    discovery = DiscoveryService(queue, crawler, repo)
-                    await discovery.run_discovery_session(sys.argv[target_index])
-        except Exception as e:
-            auditor_logger.critical(f"Discovery Failure: {e}")
-        finally:
-            if 'link_extractor' in locals() and link_extractor:
-                await link_extractor.teardown()
-            await engine.dispose()
-        return
-    
-    if "--worker" in sys.argv:
-        try:
+                try:
+                    async with AsyncSession(engine) as db_session:
+                        repo = SqlAlchemyTargetRepository(db_session)
+                        discovery = DiscoveryService(queue, crawler, repo)
+                        await discovery.run_discovery_session(sys.argv[target_index])
+                finally:
+                    await link_extractor.teardown()
+            return
+        
+        if "--worker" in sys.argv:
             from auditor.application.worker import AuditWorker # type: ignore
             worker = AuditWorker("CLI-WORKER", engine)
             await worker.start()
-        except Exception as e:
-            auditor_logger.critical(f"Worker Failure: {e}")
-        finally:
-            await engine.dispose()
-        return
+            return
 
-    if "--report" in sys.argv:
-        try:
+        if "--report" in sys.argv:
             async with AsyncSession(engine) as report_session:
                 reporter = AuditReporter(report_session)
                 res = await reporter.generate_summary_report()
@@ -124,31 +103,21 @@ Options:
                     auditor_logger.info(f"Stakeholder Report Generated: {res['html']}")
                 else:
                     auditor_logger.warning("No report generated (likely no data).")
-        except Exception as e:
-            auditor_logger.critical(f"Reporting Failure: {e}")
-        finally:
-            await engine.dispose()
-        return
+            return
 
-    if "--dashboard" in sys.argv:
-        try:
+        if "--dashboard" in sys.argv:
             dash = AuditorDashboard()
             await dash.run()
-        except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            auditor_logger.critical(f"Dashboard Failure: {e}")
-        finally:
-            await engine.dispose()
-        return
+            return
 
-    # 4. Batch Execution
-    try:
+        # 4. Batch Execution
         batch_orchestrator = BatchAuditManager(engine)
         await batch_orchestrator.run_batch_audit()
+
     except Exception as e:
-        auditor_logger.critical(f"Critical Batch Process Failure: {e}")
+        auditor_logger.critical(f"Critical System Failure: {e}")
     finally:
+        # GUARANTEED ENGINE TEARDOWN
         await engine.dispose()
 
 if __name__ == "__main__":

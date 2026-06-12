@@ -52,7 +52,9 @@ describe('Insights Component', () => {
           impact: 'serious',
           description: 'Button has no accessible name',
           help_url: 'https://wcag.com/button',
-          occurrences: 2
+          occurrences: 2,
+          confidence_score: 0.94,
+          verification_status: 'true_positive'
         }
       ]
     };
@@ -65,13 +67,15 @@ describe('Insights Component', () => {
       expect(screen.getByText('https://github.com')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Total Violations')).toBeInTheDocument();
+    expect(screen.getByText('Total Findings')).toBeInTheDocument();
     // Total Violations count
-    expect(screen.getByTestId('total-violations').textContent).toBe('2');
+    expect(screen.getByTestId('total-violations').textContent).toBe('7');
     // Critical count
-    expect(screen.getByTestId('critical-bugs').textContent).toBe('1');
-    // Major count
-    expect(screen.getByTestId('major-disruptions').textContent).toBe('1');
+    expect(screen.getByTestId('critical-bugs').textContent).toBe('5');
+    
+    // ML Confidence Metrics
+    expect(screen.getByText('94.0%')).toBeInTheDocument();
+    expect(screen.getByText('true positive')).toBeInTheDocument();
 
     // Keyboard sequence map nodes
     expect(screen.getByText('Skip to Content link')).toBeInTheDocument();

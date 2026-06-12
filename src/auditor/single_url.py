@@ -59,8 +59,9 @@ Options:
     # 1. Setup Infrastructure
     engine = create_async_engine(DATABASE_URL, echo=False)
 
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
 
     # 2. DDD Component Lifecycle
     async with AsyncSession(engine) as db_session:
@@ -84,6 +85,9 @@ Options:
             import traceback
             traceback.print_exc()
             return None
+    finally:
+        if 'engine' in locals():
+            await engine.dispose()
 
 if __name__ == "__main__":
     try:

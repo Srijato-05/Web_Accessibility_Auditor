@@ -164,6 +164,21 @@ class RedisTaskQueue:
                 return res.first() or 0
         return 0
 
+    async def get_active_workers(self) -> int:
+        """Dynamically retrieves the number of active worker nodes."""
+        if self.mode == "REDIS" and self.redis:
+            try:
+                clients = await self.redis.client_list()
+                return len([c for c in clients if c.get('flags', '') != 'N'])
+            except Exception:
+                return 1
+        if self.engine:
+            from sqlmodel import func, select # type: ignore
+            async with AsyncSession(self.engine) as session:
+                res = await session.exec(select(func.count()).select_from(TaskModel).where(TaskModel.status == "PROCESSING"))
+                return res.first() or 0
+        return 0
+
     async def complete_task(self, task_id: Any):
         """Marks a task as successfully resolved in the persistent ledger."""
         if self.mode == "REDIS":

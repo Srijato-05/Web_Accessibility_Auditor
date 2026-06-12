@@ -3,8 +3,7 @@ AGENT SERVICE: SINGLETON LIFECYCLE MANAGEMENT
 =============================================
 
 Role: Manages the persistence and reuse of specialized accessibility agents.
-This service ensures that high-memory agents (like NeuralAgent) are 
-instantiated once and shared across multiple audit missions.
+This service ensures that agents are instantiated once and shared across multiple audit missions.
 """
 
 import asyncio
@@ -13,6 +12,7 @@ from auditor.application.agents.controller import AgentController
 from auditor.application.agents.visual_agent import VisualAgent
 from auditor.application.agents.motor_agent import MotorAgent
 from auditor.application.agents.cognitive_agent import CognitiveAgent
+from auditor.application.agents.neural_agent import NeuralAgent
 from auditor.shared.logging import auditor_logger
 
 class AgentService:
@@ -45,27 +45,16 @@ class AgentService:
             if self.controller is None:
                 self.logger.info("Initializing Singleton Agentic Hub...")
                 
-                # Standard Agents
+                # Load all Advanced Heuristic Agents
                 agents = [
                     VisualAgent(),
                     MotorAgent(),
-                    CognitiveAgent()
+                    CognitiveAgent(),
+                    NeuralAgent()
                 ]
                 
-                # Neural Agent (Disabled for Ultra-Fast Performance Scan)
-                # From user request: "add only one mode and the fastest one"
-                # To re-enable, uncomment the lines below.
-                """
-                try:
-                    from auditor.application.agents.neural_agent import NeuralAgent
-                    self.logger.info("Loading Neural Forensic Agent (Qwen-1.5B)...")
-                    agents.append(NeuralAgent())
-                except Exception as e:
-                    self.logger.error(f"Neural Agent loading failed: {e}")
-                """
-
                 self.controller = AgentController(agents)
-                self.logger.info(f"Agentic Hub ONLINE with {len(agents)} deterministic agents.")
+                self.logger.info(f"Agentic Hub ONLINE with {len(agents)} advanced forensic agents.")
             
             return self.controller
 

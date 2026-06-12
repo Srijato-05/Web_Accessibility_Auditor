@@ -22,7 +22,7 @@ from auditor.shared.logging import auditor_logger # type: ignore
 logger = auditor_logger.getChild("AgentValidator")
 
 VALID_AGENTS = {"visual", "motor", "cognitive", "neural"}
-VALID_SOURCES = {"rule", "ml"}
+VALID_SOURCES = {"rule", "ml", "heuristic"}
 
 
 def validate_finding(finding: AgentFinding) -> Optional[str]:

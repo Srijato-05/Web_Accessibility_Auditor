@@ -3,10 +3,21 @@ import sys
 import shutil
 import asyncio
 import warnings
+import logging
+import time
 
+# ==========================================
+# ENTERPRISE LOGGING INFRASTRUCTURE
+# ==========================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("SystemPurgeUtility")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Resolve sys.path so we can import from src
+# Resolve sys.path
 root_path = os.path.abspath(os.path.dirname(__file__))
 src_path = os.path.join(root_path, "src")
 if src_path not in sys.path:
@@ -15,90 +26,142 @@ if src_path not in sys.path:
 from sqlmodel import SQLModel
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 
-# Import persistence models to register them in SQLModel metadata
 from auditor.infrastructure.persistence_models import AuditSessionModel, ViolationModel, TargetModel
 from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
 from auditor.domain.models import AuditTarget
 
 async def clear_and_init():
-    print("=========================================")
-    print("  ACCESSIBILITY AUDITOR SYSTEM UTILITY")
-    print("=========================================\n")
+    logger.info("=========================================")
+    logger.info("  ACCESSIBILITY AUDITOR SYSTEM UTILITY")
+    logger.info("=========================================")
 
-    # 1. Data Structure Clearing & Re-initialization
-    print("[1/4] DATA LAYER SETUP")
+    # 1. Data Structure Clearing
+    logger.info("[1/5] DATA LAYER SETUP & DIRECTORY PURGE")
     reports_dir = os.path.join(root_path, "reports")
-    data_dir = os.path.join(reports_dir, "data")
-    exports_dir = os.path.join(reports_dir, "exports")
-    logs_dir = os.path.join(reports_dir, "logs")
-    har_dir = os.path.join(reports_dir, "forensics", "har")
+    dirs_to_clear = [
+        os.path.join(reports_dir, "data"),
+        os.path.join(reports_dir, "exports"),
+        os.path.join(reports_dir, "logs"),
+        os.path.join(reports_dir, "forensics", "har")
+    ]
 
-    # Clear directories
-    for path in [data_dir, exports_dir, logs_dir, har_dir]:
+    for path in dirs_to_clear:
         if os.path.exists(path):
-            print(f" -> Clearing directory: {os.path.relpath(path, root_path)}")
-            try:
-                shutil.rmtree(path)
-            except Exception as e:
-                # Handle open/locked files by deleting contents individually or ignoring
-                print(f" -> Warning while clearing {os.path.relpath(path, root_path)}: {e}")
+            logger.info(f"Clearing directory: {os.path.relpath(path, root_path)}")
+            # Robust Retry Logic for Windows File Locks
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(path)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logger.error(f"Failed to clear {path} completely. Zombie process holding lock? Error: {e}")
+                    else:
+                        time.sleep(1)
         os.makedirs(path, exist_ok=True)
-    print(" -> Directories successfully re-initialized.")
+    logger.info("Directories successfully re-initialized.")
 
-    # Re-create database schema
-    print("\n[2/4] DATABASE SCHEMA & TABLE INITIALIZATION")
+    # 2. Database Schema Creation
+    logger.info("\n[2/5] DATABASE SCHEMA & TABLE INITIALIZATION")
     database_url = "sqlite+aiosqlite:///./reports/data/audit_results.db"
-    engine = create_async_engine(database_url, echo=False)
     
-    async with engine.begin() as conn:
-        print(" -> Creating SQLModel tables in audit_results.db...")
-        await conn.run_sync(SQLModel.metadata.create_all)
-        # Create task_queue table if it doesn't exist
-        from auditor.infrastructure.task_model import task_metadata
-        await conn.run_sync(task_metadata.create_all)
-    print(" -> Database schema created/verified successfully.")
+    try:
+        engine = create_async_engine(database_url, echo=False)
+        async with engine.begin() as conn:
+            logger.info("Creating SQLModel tables in audit_results.db...")
+            await conn.run_sync(SQLModel.metadata.create_all)
+            # Ensure Redis task queue persistence table exists
+            from auditor.infrastructure.task_model import task_metadata
+            await conn.run_sync(task_metadata.create_all)
+        logger.info("Database schema created/verified successfully.")
+    except Exception as e:
+        logger.critical(f"CRITICAL: Failed to initialize SQLite database: {e}")
+        sys.exit(1)
 
-    # Truncate tables to ensure a clean slate even when database file is locked
+    # 3. Truncate Tables (Failsafe for active DBs)
     from sqlalchemy import text
-    async with AsyncSession(engine) as db_session:
-        print(" -> Truncating table records...")
-        await db_session.execute(text("DELETE FROM violations"))
-        await db_session.execute(text("DELETE FROM audit_sessions"))
-        await db_session.execute(text("DELETE FROM targets"))
-        await db_session.execute(text("DELETE FROM audit_task_queue"))
-        await db_session.commit()
-    print(" -> All table records successfully cleared.")
+    try:
+        async with AsyncSession(engine) as db_session:
+            logger.info("Truncating table records for absolute clean slate...")
+            await db_session.execute(text("DELETE FROM violations"))
+            await db_session.execute(text("DELETE FROM audit_sessions"))
+            await db_session.execute(text("DELETE FROM targets"))
+            await db_session.execute(text("DELETE FROM audit_task_queue"))
+            await db_session.commit()
+        logger.info("All table records successfully cleared.")
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to truncate SQLite tables (Possible Table Lock): {e}")
 
-    # Seeding targets
-    print("\n[3/4] SEED DATA REGISTRATION")
-    from auditor.batch_seeding import DEFAULT_SECTOR_MATRIX
-    async with AsyncSession(engine) as db_session:
-        batch_repo = SqlAlchemyTargetRepository(db_session)
-        added = 0
-        for category, urls in DEFAULT_SECTOR_MATRIX.items():
-            for url in urls:
-                new_target = AuditTarget(url=url)
-                await batch_repo.add_domain(new_target)
-                added += 1
-        print(f" -> Successfully seeded {added} default target hosts into ledger database.")
+    # 4. Seeding targets
+    logger.info("\n[3/5] SEED DATA REGISTRATION")
+    try:
+        from auditor.batch_seeding import DEFAULT_SECTOR_MATRIX
+        async with AsyncSession(engine) as db_session:
+            batch_repo = SqlAlchemyTargetRepository(db_session)
+            added = 0
+            for category, urls in DEFAULT_SECTOR_MATRIX.items():
+                for url in urls:
+                    new_target = AuditTarget(url=url)
+                    await batch_repo.add_domain(new_target)
+                    added += 1
+            logger.info(f"Successfully seeded {added} default target hosts into ledger database.")
+    except Exception as e:
+        logger.error(f"Failed to seed default targets: {e}")
 
-    # 4. Frontend & Backend/API Structure Verification
-    print("\n[4/4] FRONTEND, BACKEND & API VERIFICATION")
+    # 5. External Graph & Cache Purge
+    logger.info("\n[4/5] EXTERNAL GRAPH & CACHE PURGE")
+    try:
+        import redis
+        # Add timeouts to prevent hanging if Redis is offline
+        r = redis.Redis(host='localhost', port=6379, db=0, socket_timeout=3, socket_connect_timeout=3)
+        r.ping() # Validate connection explicitly
+        r.flushall()
+        logger.info("[REDIS] Successfully flushed all cache keys.")
+    except ImportError:
+        logger.warning("[REDIS] Redis client not installed. Skipping cache flush.")
+    except redis.ConnectionError:
+        logger.warning("[REDIS] Could not connect to Redis server (Offline). Skipping cache flush.")
+    except Exception as e:
+        logger.error(f"[REDIS] Unexpected error during cache flush: {e}")
+
+    try:
+        from auditor.infrastructure.neo4j_repository import Neo4jRepository
+        graph = Neo4jRepository()
+        if graph.driver:
+            with graph.driver.session() as session:
+                session.run("MATCH (n) DETACH DELETE n")
+            graph.close()
+            logger.info("[NEO4J] Successfully wiped all nodes and edges from Graph Database.")
+        else:
+            logger.warning("[NEO4J] Skipped (Driver offline or missing credentials).")
+    except Exception as e:
+        logger.error(f"[NEO4J] Warning: Could not execute Cypher purge: {e}")
+
+    # 6. System Structure Verification
+    logger.info("\n[5/5] SYSTEM STRUCTURE VERIFICATION")
     frontend_dir = os.path.join(root_path, "frontend")
     backend_dir = os.path.join(root_path, "src", "auditor")
     
     if os.path.exists(frontend_dir):
-        print(" -> [FRONTEND] Verified frontend/ exists.")
+        logger.info("[FRONTEND] Verified frontend/ directory exists.")
     else:
-        print(" -> [FRONTEND] WARNING: frontend/ directory not found.")
+        logger.warning("[FRONTEND] WARNING: frontend/ directory not found.")
         
     if os.path.exists(backend_dir):
-        print(" -> [BACKEND] Verified backend src/auditor/ exists.")
+        logger.info("[BACKEND] Verified backend src/auditor/ directory exists.")
     else:
-        print(" -> [BACKEND] WARNING: backend src/auditor/ not found.")
+        logger.warning("[BACKEND] WARNING: backend src/auditor/ not found.")
         
-    print("\nSystem clean-up and structure initialization completed successfully.")
+    logger.info("\nSystem clean-up and structure initialization completed successfully.")
 
 if __name__ == "__main__":
-    asyncio.run(clear_and_init())
+    try:
+        asyncio.run(clear_and_init())
+    except KeyboardInterrupt:
+        logger.warning("Purge interrupted by user.")
+        sys.exit(130)
+    except Exception as e:
+        logger.critical(f"Unhandled exception during system purge: {e}")
+        sys.exit(1)

@@ -73,9 +73,6 @@ def is_safe_url(url: str) -> bool:
     except Exception:
         return False
 
-# Global Path Legacy Support
-BASE_DIR = str(PROJECT_ROOT)
-
 # Unified Database Configuration
 engine = create_async_engine(DATABASE_URL, echo=False)
 task_queue = RedisTaskQueue(REDIS_URL, db_engine=engine)
@@ -347,7 +344,9 @@ async def get_audit_violations(audit_id: str):
                     "message": v.description,
                     "category": category,
                     "agent": v.agent or "axe",
-                    "compliance_level": comp_level or "Non-Standard"
+                    "compliance_level": comp_level or "Non-Standard",
+                    "confidence_score": getattr(v, 'confidence_score', None),
+                    "verification_status": getattr(v, 'verification_status', "unverified")
                     # --- END FRONTEND ALIASES ---
                 }
         
@@ -696,6 +695,30 @@ async def export_logs():
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse("No logs recorded yet.", status_code=200)
 
+@router.get("/reports/{audit_id}/download")
+async def download_report(audit_id: str):
+    import glob
+    
+    try:
+        safe_id = str(UUID(audit_id))[:8]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid audit ID")
+        
+    export_dir = os.path.join(PROJECT_ROOT, "reports", "exports")
+    search_pattern = os.path.join(export_dir, f"audit_report_{safe_id}_*.pdf")
+    files = glob.glob(search_pattern)
+    
+    if not files:
+        raise HTTPException(status_code=404, detail="PDF report not found or still generating.")
+        
+    latest_file = max(files, key=os.path.getmtime)
+    
+    return FileResponse(
+        path=latest_file,
+        filename=f"Clinical_Accessibility_Report_{safe_id}.pdf",
+        media_type="application/pdf"
+    )
+
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
     try:
@@ -728,6 +751,35 @@ async def get_session(session_id: str):
             "agent_summary": session.agent_summary,
             "error_message": session.error_message
         }
+
+class VerificationRequest(BaseModel):
+    status: str # unverified, true_positive, false_positive, false_negative
+
+@router.patch("/violations/{violation_id}/verify")
+async def verify_violation(violation_id: UUID, req: VerificationRequest):
+    """
+    Phase VIII: Ground Truth Analytics Endpoint.
+    Allows researchers to flag AI/Heuristic findings as false positives/negatives.
+    """
+    if req.status not in ["unverified", "true_positive", "false_positive", "false_negative"]:
+        raise HTTPException(status_code=400, detail="Invalid verification status")
+
+    async with AsyncSession(engine) as db_session:
+        from sqlmodel import select, update
+        from auditor.infrastructure.persistence_models import ViolationModel
+        
+        stmt = select(ViolationModel).where(ViolationModel.id == violation_id)
+        res = await db_session.exec(stmt)
+        violation = res.first()
+        
+        if not violation:
+            raise HTTPException(status_code=404, detail="Violation not found")
+            
+        update_stmt = update(ViolationModel).where(ViolationModel.id == violation_id).values(verification_status=req.status)
+        await db_session.exec(update_stmt)
+        await db_session.commit()
+        
+        return {"status": "success", "violation_id": str(violation_id), "verification_status": req.status}
 
 @router.get("/reports/{session_id}/download")
 async def download_report(session_id: str, background_tasks: BackgroundTasks):

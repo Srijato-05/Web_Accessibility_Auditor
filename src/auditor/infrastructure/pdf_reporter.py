@@ -12,8 +12,8 @@ if _root not in sys.path:
 
 from playwright.sync_api import sync_playwright # type: ignore
 
-def generate_html_from_json(data: Dict[str, Any]) -> str:
-    """Generates an HTML report from the JSON audit findings."""
+def generate_html_from_json(data: Dict[str, Any], override_findings: list = None, hide_header: bool = False) -> str:
+    """Generates a Clinical-Grade HTML report from the JSON audit findings."""
     session_id = data.get("session_id", "Unknown")
     target_url = data.get("target_url", "Multiple Targets" if data.get("is_crawl", False) else "Unknown")
     generated_at_raw = data.get("generated_at", "")
@@ -23,25 +23,28 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
     except Exception:
         generated_at = generated_at_raw
 
-    # COMPATIBILITY LAYER: Support both 'findings' and 'violations'
-    raw_findings = data.get("findings", data.get("violations", []))
+    raw_findings = override_findings if override_findings is not None else data.get("findings", data.get("violations", []))
     findings = list(raw_findings) if raw_findings is not None else []
-    total_findings = data.get("total_findings", len(findings))
-    
-    # Calculate by_agent if not provided
+    full_findings = data.get("findings", data.get("violations", [])) or []
+    total_findings = data.get("total_findings", len(full_findings))
+
     by_agent = data.get("by_agent", {})
     if not by_agent:
         by_agent = {}
-        for f in findings:
+        for f in full_findings:
             if isinstance(f, dict):
                 agent = f.get("agent", "unknown").lower()
                 by_agent[agent] = by_agent.get(agent, 0) + 1
+    
+    # Optimize rendering performance for massive datasets
+    render_as_table = len(findings) > 300
+    is_truncated = False
 
-    # Matrix Support (Normalized & Fallback Calculation)
+    # Matrix Support
     matrix = data.get("matrix", {})
     
-    # Ensure all 5 primary agents are represented in the matrix
-    agents_list = ["axe", "visual", "motor", "cognitive", "neural"]
+    # Core Agents + Static Axe Engine
+    agents_list = ["axe", "htmlcs", "visual", "motor", "cognitive", "neural"]
     full_matrix = {}
     for a in agents_list:
         full_matrix[a] = {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0}
@@ -59,15 +62,13 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                         if p.lower() in cat_lower:
                             norm_cat = p
                             break
-                    
                     full_matrix[a_lower][norm_cat] += val
     else:
-        # Calculate matrix dynamically from findings
         from auditor.shared.compliance_mapper import ComplianceMapper
         principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
-        for f in findings:
+        for f in full_findings:
             if isinstance(f, dict):
-                agent = str(f.get("agent", "axe")).lower()
+                agent = str(f.get("agent", "visual")).lower()
                 category = str(f.get("category", "General")).lower()
                 
                 norm_cat = "General"
@@ -79,408 +80,534 @@ def generate_html_from_json(data: Dict[str, Any]) -> str:
                 if agent in full_matrix:
                     full_matrix[agent][norm_cat] += 1
 
-    # Start building HTML
     html = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>Accessibility Audit Report</title>
+        <title>Clinical Accessibility Report</title>
         <style>
             body {{
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                background-color: #f9fafb;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                color: #0f172a;
+                background-color: #ffffff;
                 margin: 0;
-                padding: 40px;
+                padding: 24px;
+                -webkit-print-color-adjust: exact;
             }}
             .container {{
-                max-width: 900px;
-                margin: 0 auto;
-                background: white;
-                padding: 40px;
+                max-width: 100%;
+                margin: 0;
+                background: transparent;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+            }}
+            .header-banner {{
+                background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+                color: white;
+                padding: 16px 24px;
                 border-radius: 8px;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }}
-            h1 {{
-                color: #1a202c;
-                border-bottom: 2px solid #e2e8f0;
-                padding-bottom: 10px;
-                margin-top: 0;
-            }}
-            .meta-info {{
-                margin-bottom: 30px;
-                color: #4a5568;
-                font-size: 0.95em;
-            }}
-            .meta-info p {{ margin: 5px 0; }}
-            .summary-box {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 15px;
-                margin-bottom: 40px;
-            }}
-            .card {{
-                flex: 1;
-                min-width: 140px;
-                background: #ebf4ff;
-                padding: 15px;
-                border-radius: 8px;
-                text-align: center;
-                border: 1px solid #bee3f8;
-            }}
-            .card h3 {{ margin: 0 0 5px 0; font-size: 0.9em; color: #2b6cb0; text-transform: uppercase; }}
-            .card .number {{ font-size: 1.8em; font-weight: bold; color: #2c5282; margin: 0; }}
-            
-            /* Matrix Styling */
-            .matrix-section {{ margin-bottom: 40px; page-break-inside: avoid; }}
-            .matrix-table {{ 
-                width: 100%; 
-                border-collapse: collapse; 
-                margin-top: 15px;
-                background: #fff;
-                font-size: 0.9em;
-                border: 1px solid #e2e8f0;
-            }}
-            .matrix-table th, .matrix-table td {{ 
-                border: 1px solid #e2e8f0; 
-                padding: 12px; 
-                text-align: center; 
-            }}
-            .matrix-table th {{ background: #f7fafc; color: #4a5568; }}
-            .matrix-label {{ text-align: left !important; font-weight: bold; background: #f7fafc; }}
-            .matrix-value {{ font-weight: bold; color: #2c5282; }}
-            .matrix-zero {{ color: #cbd5e0; }}
-
-            h2 {{ color: #2d3748; margin-top: 40px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }}
-            
-            .finding {{
-                background: #fff;
-                border: 1px solid #e2e8f0;
-                border-left: 4px solid #ed8936;
-                border-radius: 6px;
-                padding: 20px;
-                margin-bottom: 20px;
-                page-break-inside: avoid;
-            }}
-            /* Style overrides for standard and agent findings */
-            .finding.visual {{ border-left-color: #4299e1; }}
-            .finding.motor {{ border-left-color: #48bb78; }}
-            .finding.cognitive {{ border-left-color: #9f7aea; }}
-            .finding.neural {{ border-left-color: #f56565; }}
-            .finding.axe {{ border-left-color: #718096; }}
-            
-            .finding-header {{
+                margin-bottom: 24px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                margin-bottom: 15px;
             }}
-            .finding-title {{
+            .header-banner h1 {{
                 margin: 0;
-                font-size: 1.2em;
-                color: #2d3748;
-                font-weight: bold;
-                text-transform: capitalize;
+                font-size: 2.2em;
+                font-weight: 800;
+                letter-spacing: -0.04em;
+                color: #f8fafc;
             }}
+            .meta-info {{
+                text-align: right;
+                font-size: 0.85em;
+                color: #94a3b8;
+            }}
+            .meta-info p {{ margin: 3px 0; }}
+            .meta-info strong {{ color: #e2e8f0; }}
+            
+            h2 {{ color: #1e293b; font-size: 1.5em; margin-top: 24px; margin-bottom: 12px; font-weight: 700; letter-spacing: -0.02em; }}
+            
+            .summary-grid {{
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                gap: 10px;
+                margin-bottom: 24px;
+            }}
+            .card {{
+                background: #f8fafc;
+                padding: 12px 8px;
+                border-radius: 8px;
+                text-align: center;
+                border: 1px solid #e2e8f0;
+                position: relative;
+                overflow: hidden;
+            }}
+            .card.total {{ background: #eff6ff; border-color: #bfdbfe; grid-column: span 1; }}
+            .card h3 {{ margin: 0 0 6px 0; font-size: 0.7em; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }}
+            .card .number {{ font-size: 1.8em; font-weight: 800; margin: 0; color: #0f172a; line-height: 1; }}
+            
+            .card.axe {{ border-top: 4px solid #64748b; }}
+            .card.htmlcs {{ border-top: 4px solid #d97706; }}
+            .card.visual {{ border-top: 4px solid #3b82f6; }}
+            .card.motor {{ border-top: 4px solid #10b981; }}
+            .card.cognitive {{ border-top: 4px solid #8b5cf6; }}
+            .card.neural {{ border-top: 4px solid #ef4444; }}
+
+            /* Matrix Styling */
+            .matrix-container {{ background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; page-break-inside: avoid; break-inside: avoid; }}
+            .matrix-table {{ width: 100%; border-collapse: collapse; text-align: center; }}
+            .matrix-table th {{ background: #f8fafc; padding: 10px 12px; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; border-bottom: 2px solid #e2e8f0; }}
+            .matrix-table td {{ padding: 10px 12px; border-bottom: 1px solid #f1f5f9; border-right: 1px solid #f1f5f9; font-weight: 600; font-size: 0.95em; }}
+            .matrix-table td:last-child {{ border-right: none; }}
+            .matrix-table tbody tr:last-child td {{ border-bottom: none; }}
+            .matrix-label {{ text-align: left !important; background: #f8fafc; border-right: 2px solid #e2e8f0 !important; color: #334155; font-size: 0.85em !important; text-transform: uppercase; letter-spacing: 0.05em; }}
+            
+            .val-high {{ color: #ef4444; font-weight: 800; }}
+            .val-med {{ color: #f59e0b; font-weight: 800; }}
+            .val-low {{ color: #3b82f6; font-weight: 700; }}
+            .val-zero {{ color: #cbd5e1; font-weight: 400; }}
+
+            /* Findings List */
+            .finding {{
+                background: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 24px;
+                margin-bottom: 24px;
+                page-break-inside: avoid;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+                position: relative;
+                overflow: hidden;
+            }}
+            .finding::before {{
+                content: '';
+                position: absolute;
+                top: 0; left: 0; bottom: 0; width: 6px;
+            }}
+            .finding.axe::before {{ background: #64748b; }}
+            .finding.htmlcs::before {{ background: #d97706; }}
+            .finding.visual::before {{ background: #3b82f6; }}
+            .finding.motor::before {{ background: #10b981; }}
+            .finding.cognitive::before {{ background: #8b5cf6; }}
+            .finding.neural::before {{ background: #ef4444; }}
+            
+            .finding-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }}
+            .finding-title {{ margin: 0; font-size: 1.25em; font-weight: 700; color: #1e293b; max-width: 70%; }}
+            .finding-tags {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }}
+            
             .badge {{
                 padding: 4px 10px;
-                border-radius: 999px;
-                font-size: 0.8em;
-                font-weight: bold;
-                color: white;
+                border-radius: 6px;
+                font-size: 0.75em;
+                font-weight: 700;
                 text-transform: uppercase;
-                white-space: nowrap;
+                letter-spacing: 0.05em;
             }}
-            .badge.visual {{ background: #4299e1; }}
-            .badge.motor {{ background: #48bb78; }}
-            .badge.cognitive {{ background: #9f7aea; }}
-            .badge.neural {{ background: #f56565; }}
-            .badge.axe {{ background: #718096; }}
-            .badge.below-a {{ background: #e53e3e; border: 1px solid #feb2b2; }}
-            .badge.unknown {{ background: #a0aec0; }}
+            .badge.axe {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
+            .badge.htmlcs {{ background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }}
+            .badge.visual {{ background: #dbeafe; color: #1d4ed8; }}
+            .badge.motor {{ background: #d1fae5; color: #047857; }}
+            .badge.cognitive {{ background: #ede9fe; color: #6d28d9; }}
+            .badge.neural {{ background: #fee2e2; color: #b91c1c; }}
+            .badge.guideline {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
             
-            .row {{ margin-bottom: 10px; }}
-            .label {{ font-weight: bold; color: #4a5568; width: 120px; display: inline-block; }}
-            .url-source {{ font-size: 0.8em; color: #718096; margin-top: -10px; margin-bottom: 15px; font-family: monospace; }}
+            .conf-bar-container {{ width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; }}
+            .conf-bar {{ height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius: 3px; }}
+            .conf-text {{ font-size: 0.8em; font-weight: 700; color: #64748b; margin-top: 4px; display: block; }}
+            
+            .row {{ margin-bottom: 12px; display: flex; }}
+            .label {{ font-weight: 700; color: #64748b; width: 100px; flex-shrink: 0; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }}
+            .value {{ color: #334155; font-size: 0.95em; }}
+            .url-source {{ font-family: Consolas, "Liberation Mono", Courier, monospace; font-size: 0.8em; color: #94a3b8; margin-bottom: 20px; }}
             
             .code-block {{
-                background: #f7fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 4px;
-                padding: 10px;
-                font-family: monospace;
-                font-size: 0.9em;
+                background: #1e293b;
+                color: #e2e8f0;
+                border-radius: 8px;
+                padding: 16px;
+                font-family: Consolas, "Liberation Mono", Courier, monospace;
+                font-size: 0.85em;
                 word-wrap: break-word;
                 white-space: pre-wrap;
-                margin: 5px 0 15px 0;
+                margin-top: 8px;
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
             }}
             
             .fix-block {{
-                background: #f0fff4;
-                border: 1px solid #c6f6d5;
-                padding: 15px;
-                border-radius: 6px;
-                margin-top: 15px;
+                background: #f0fdf4;
+                border: 1px solid #bbf7d0;
+                padding: 16px;
+                border-radius: 8px;
+                margin-top: 20px;
+                display: flex;
+                gap: 12px;
             }}
-            .fix-title {{ font-weight: bold; color: #276749; margin-bottom: 5px; }}
+            .fix-icon {{ font-size: 1.5em; }}
+            .fix-content {{ font-size: 0.95em; color: #166534; }}
+            .fix-title {{ font-weight: 700; margin-bottom: 4px; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.05em; }}
         </style>
     </head>
-    <body>
-        <div class="container">
-            <h1>Accessibility Audit Report</h1>
-            
-            <div class="meta-info">
-                <p><strong>Target:</strong> {target_url}</p>
-                <p><strong>Session ID:</strong> {session_id}</p>
-                <p><strong>Generated:</strong> {generated_at}</p>
-            </div>
-            
-            <div class="summary-box">
-                <div class="card">
-                    <h3>Total Finds</h3>
-                    <p class="number">{total_findings}</p>
-                </div>
-                <div class="card" style="background: #edf2f7; border-color: #cbd5e0;">
-                    <h3 style="color: #4a5568;">Standard (Axe)</h3>
-                    <p class="number" style="color: #2d3748;">{by_agent.get('axe', 0) + by_agent.get('unknown', 0)}</p>
-                </div>
-                <div class="card">
-                    <h3>Visual</h3>
-                    <p class="number">{by_agent.get('visual', 0)}</p>
-                </div>
-                <div class="card">
-                    <h3>Motor</h3>
-                    <p class="number">{by_agent.get('motor', 0)}</p>
-                </div>
-                <div class="card">
-                    <h3>Cognitive</h3>
-                    <p class="number">{by_agent.get('cognitive', 0)}</p>
-                </div>
-                <div class="card">
-                    <h3>Neural</h3>
-                    <p class="number">{by_agent.get('neural', 0)}</p>
-                </div>
-            </div>
-
-            <div class="matrix-section">
-                <h2>Forensic Diagnostic Matrix</h2>
-                <table class="matrix-table">
-                    <thead>
-                        <tr>
-                            <th>Agent</th>
-                            <th>Perceivable</th>
-                            <th>Operable</th>
-                            <th>Understandable</th>
-                            <th>Robust</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {''.join([f"""
-                        <tr>
-                            <td class="matrix-label">{agent.upper()}</td>
-                            <td class="{'matrix-value' if full_matrix[agent].get('Perceivable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Perceivable', 0)}</td>
-                            <td class="{'matrix-value' if full_matrix[agent].get('Operable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Operable', 0)}</td>
-                            <td class="{'matrix-value' if full_matrix[agent].get('Understandable',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Understandable', 0)}</td>
-                            <td class="{'matrix-value' if full_matrix[agent].get('Robust',0) > 0 else 'matrix-zero'}">{full_matrix[agent].get('Robust', 0)}</td>
-                        </tr>""" for agent in agents_list])}
-                    </tbody>
-                </table>
-            </div>
-            
-            <h2>Detailed Findings</h2>
     """
+    if hide_header:
+        html += f"""
+        <body>
+            <div class="container">
+                <h2 style="margin-top: 20px;">Vector Findings Telemetry (Continued)</h2>
+        """
+    else:
+        html += f"""
+        <body>
+            <div class="container">
+                <div class="header-banner">
+                    <h1>Clinical Accessibility Report</h1>
+                    <div class="meta-info">
+                        <p><strong>Target:</strong> {target_url}</p>
+                        <p><strong>Session ID:</strong> {session_id}</p>
+                        <p><strong>Generated:</strong> {generated_at}</p>
+                    </div>
+                </div>
+                
+                <div class="summary-grid">
+                    {f'<div class="card" style="grid-column: span 7; background: #fffbeb; border-color: #fcd34d; color: #b45309;"><strong>WARNING:</strong> Maximum PDF limit reached. Displaying the top 250 findings. Check JSON export for complete dataset.</div>' if is_truncated else ''}
+                    <div class="card total">
+                        <h3>Total Anomalies</h3>
+                        <p class="number">{total_findings}</p>
+                    </div>
+                    <div class="card axe" style="grid-column: span 1;">
+                        <h3>Standard (Axe)</h3>
+                        <p class="number">{by_agent.get('axe', 0)}</p>
+                    </div>
+                    <div class="card htmlcs">
+                        <h3>Standard (HTMLCS)</h3>
+                        <p class="number">{by_agent.get('htmlcs', 0)}</p>
+                    </div>
+                    <div class="card visual">
+                        <h3>Visual AI</h3>
+                        <p class="number">{by_agent.get('visual', 0)}</p>
+                    </div>
+                    <div class="card motor">
+                        <h3>Motor Physics</h3>
+                        <p class="number">{by_agent.get('motor', 0)}</p>
+                    </div>
+                    <div class="card cognitive">
+                        <h3>Cognitive NLP</h3>
+                        <p class="number">{by_agent.get('cognitive', 0)}</p>
+                    </div>
+                    <div class="card neural">
+                        <h3>Neural Kinetic</h3>
+                        <p class="number">{by_agent.get('neural', 0)}</p>
+                    </div>
+                </div>
 
-    # Group findings by agent
-    grouped_findings = {
-        "axe": [],
-        "visual": [],
-        "motor": [],
-        "cognitive": [],
-        "neural": []
-    }
+                <h2>Clinical Diagnostic Matrix</h2>
+                <div class="matrix-container">
+                    <table class="matrix-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 20%;">Agent Engine</th>
+                                <th style="width: 20%;">Perceivable</th>
+                                <th style="width: 20%;">Operable</th>
+                                <th style="width: 20%;">Understandable</th>
+                                <th style="width: 20%;">Robust</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join([f'''
+                            <tr>
+                                <td class="matrix-label">{agent}</td>
+                                <td class="{('val-high' if full_matrix[agent].get('Perceivable',0) > 10 else 'val-med' if full_matrix[agent].get('Perceivable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Perceivable', 0)}</td>
+                                <td class="{('val-high' if full_matrix[agent].get('Operable',0) > 10 else 'val-med' if full_matrix[agent].get('Operable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Operable', 0)}</td>
+                                <td class="{('val-high' if full_matrix[agent].get('Understandable',0) > 10 else 'val-med' if full_matrix[agent].get('Understandable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Understandable', 0)}</td>
+                                <td class="{('val-high' if full_matrix[agent].get('Robust',0) > 10 else 'val-med' if full_matrix[agent].get('Robust',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Robust', 0)}</td>
+                            </tr>''' for agent in agents_list])}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="page-break-after: always; break-after: page;"></div>
+                
+                <h2>Vector Findings Telemetry</h2>
+        """
+
+    grouped_findings = { "axe": [], "htmlcs": [], "visual": [], "motor": [], "cognitive": [], "neural": [] }
     for f in findings:
-        agent = str(f.get("agent", "axe")).lower()
-        if agent not in grouped_findings:
-            grouped_findings[agent] = []
-        grouped_findings[agent].append(f)
+        agent = str(f.get("agent", "unknown")).lower()
+        if agent in grouped_findings:
+            grouped_findings[agent].append(f)
 
-    # Friendly titles for each group
     agent_titles = {
-        "axe": "Standard Accessibility Violations (Axe Core)",
-        "visual": "Visual Accessibility Agent Findings",
-        "motor": "Motor & Mobility Agent Findings",
-        "cognitive": "Cognitive Accessibility Agent Findings",
-        "neural": "Neural & Cognitive Emulation Findings"
+        "axe": "Static Baseline (Axe Core)",
+        "htmlcs": "Static Baseline (HTML CodeSniffer)",
+        "visual": "Visual & Luminance Anomalies",
+        "motor": "Motor & Spatial Physics Collisions",
+        "cognitive": "Cognitive & Semantic NLP Deviations",
+        "neural": "Neural & Kinetic Vestibular Triggers"
     }
 
     global_idx = 1
-    for agent_key in ["axe", "visual", "motor", "cognitive", "neural"]:
+    for agent_key in ["axe", "htmlcs", "visual", "motor", "cognitive", "neural"]:
         agent_list = grouped_findings[agent_key]
         if not agent_list:
             continue
             
-        agent_title = agent_titles.get(agent_key, f"{agent_key.upper()} Findings")
+        agent_title = agent_titles[agent_key]
         html += f"""
-            <div class="agent-group-header" style="margin-top: 40px; margin-bottom: 20px; page-break-after: avoid;">
-                <h2 style="font-size: 1.5rem; color: #2c5282; border-bottom: 2px solid #cbd5e0; padding-bottom: 8px;">
-                    {agent_title} ({len(agent_list)})
-                </h2>
-            </div>
+            <h3 style="margin-top: 50px; margin-bottom: 20px; font-size: 1.4em; color: #334155; display: flex; align-items: center; gap: 10px;">
+                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: {
+                    '#64748b' if agent_key=='axe' else '#d97706' if agent_key=='htmlcs' else '#3b82f6' if agent_key=='visual' else '#10b981' if agent_key=='motor' else '#8b5cf6' if agent_key=='cognitive' else '#ef4444'
+                }"></span>
+                {agent_title} ({len(agent_list)})
+            </h3>
         """
         
-        for finding in agent_list:
-            agent = html_escape(str(finding.get("agent") or "axe").lower())
-            violation_val = finding.get("violation") or finding.get("rule_id") or "Issue"
-            violation = html_escape(str(violation_val).replace("_", " "))
-            guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "N/A"))
-            category = html_escape(str(finding.get("category") or ""))
-            issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
-            impact = html_escape(str(finding.get("impact") or "N/A"))
-            element = finding.get("element") or finding.get("selector") or ""
-            url = html_escape(str(finding.get("url") or ""))
+        if render_as_table:
+            chunk_size = 100
+            for i in range(0, len(agent_list), chunk_size):
+                chunk = agent_list[i:i+chunk_size]
+                html += f"""
+                <table class="matrix-table" style="text-align: left; margin-bottom: 20px; font-size: 0.85em; width: 100%; border: 1px solid #e2e8f0; page-break-inside: auto;">
+                    <thead>
+                        <tr>
+                            <th style="width: 25%; text-align: left;">Rule / Anomaly</th>
+                            <th style="width: 10%; text-align: left;">Impact</th>
+                            <th style="width: 40%; text-align: left;">Diagnosis & Remediation</th>
+                            <th style="width: 25%; text-align: left;">DOM Signature</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+                for finding in chunk:
+                    violation_val = finding.get("violation") or finding.get("rule_id") or "Anomaly Detected"
+                    violation = html_escape(str(violation_val).replace("_", " ").title())
+                    guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "G-Level"))
+                    issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
+                    impact = html_escape(str(finding.get("impact") or "N/A"))
+                    element = finding.get("element") or finding.get("selector") or ""
+                    fix = html_escape(str(finding.get("fix") or "No programmatic fix available."))
+                    
+                    safe_element = html_escape(str(element))
+                    if len(safe_element) > 150: safe_element = safe_element[:147] + "..."
+                    
+                    html += f"""
+                        <tr style="border-bottom: 1px solid #e2e8f0; page-break-inside: avoid;">
+                            <td style="padding: 12px; vertical-align: top; text-align: left;"><strong>{violation}</strong><br><span style="color: #64748b; font-size:0.9em; margin-top: 4px; display: inline-block;">{guideline}</span></td>
+                            <td style="padding: 12px; vertical-align: top; text-align: left;"><span class="badge {agent_key}">{impact}</span></td>
+                            <td style="padding: 12px; vertical-align: top; text-align: left;">
+                                <div style="margin-bottom: 6px; color: #334155;">{issue_desc}</div>
+                                <div style="color: #047857; font-size: 0.9em; margin-top: 4px;"><strong>Fix:</strong> {fix}</div>
+                            </td>
+                            <td style="padding: 12px; vertical-align: top; text-align: left; font-family: monospace; font-size: 0.9em; color: #475569; word-break: break-all;">{safe_element}</td>
+                        </tr>
+                    """
+                    global_idx += 1
+                html += "</tbody></table>"
             
-            # Extract Recommended Fix
-            fix = finding.get("fix")
-            if not fix:
-                if agent == "axe":
-                    nodes = finding.get("nodes", [])
-                    if nodes and isinstance(nodes, list) and len(nodes) > 0:
-                        first_node = nodes[0]
-                        if isinstance(first_node, dict):
-                            fix = first_node.get("failure_summary") or first_node.get("failureSummary")
-                else:
-                    desc = finding.get("description") or ""
-                    if "Fix Recommended: " in desc:
-                        fix = desc.split("Fix Recommended: ", 1)[1]
-                    else:
-                        nodes = finding.get("nodes", [])
-                        if nodes and isinstance(nodes, list) and len(nodes) > 0:
-                            first_node = nodes[0]
-                            if isinstance(first_node, dict):
-                                fix = first_node.get("fix") or first_node.get("failure_summary")
-            
-            if not fix:
-                fix = "No fix recommended."
-            else:
-                fix = html_escape(str(fix))
+        else:
+            for finding in agent_list:
+                violation_val = finding.get("violation") or finding.get("rule_id") or "Anomaly Detected"
+                violation = html_escape(str(violation_val).replace("_", " ").title())
+                guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "G-Level"))
+                issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
+                impact = html_escape(str(finding.get("impact") or "N/A"))
+                element = finding.get("element") or finding.get("selector") or ""
+                url = html_escape(str(finding.get("url") or ""))
                 
-            # Extract subcategory from tags
-            tags = finding.get("tags") or []
-            subcategory = ""
-            for t in tags:
-                if isinstance(t, str) and t.startswith("cat."):
-                    subcategory = html_escape(t[4:].replace("-", " ").title())
-                    break
-            
-            if category and subcategory:
-                cat_display = f"[{category.upper()} - {subcategory.upper()}]"
-            elif category:
-                cat_display = f"[{category.upper()}]"
-            else:
-                cat_display = ""
+                fix = html_escape(str(finding.get("fix") or "No programmatic fix available."))
+                    
+                conf_val = finding.get("confidence_score")
+                conf_pct = float(conf_val)*100 if conf_val else 85.0
                 
-            # Forensic Intelligence Markers
-            is_below_a = finding.get("compliance_level") == "Below A"
-            
-            html_content = f"""
-                <div class="finding {agent}">
-                    <div class="finding-header">
-                        <h3 class="finding-title">{global_idx}. {violation} {cat_display}</h3>
-                        <div style="display: flex; gap: 8px;">
-                            {f'<span class="badge below-a">Below A</span>' if is_below_a else ''}
-                            <span class="badge {agent}">{agent}</span>
-                            <span class="badge unknown" style="background: #edf2f7; color: #4a5568;">{guideline}</span>
+                html_content = f"""
+                    <div class="finding {agent_key}">
+                        <div class="finding-header">
+                            <h4 class="finding-title">{global_idx}. {violation}</h4>
+                            <div class="finding-tags">
+                                <span class="badge {agent_key}">{agent_key.upper()}</span>
+                                <span class="badge guideline">{guideline}</span>
+                            </div>
                         </div>
-                    </div>
-                    {f'<div class="url-source">Source: {url}</div>' if url else ''}
-                    <div class="row">
-                        <span class="label">Impact:</span> {impact}
-                    </div>
-                    <div class="row">
-                        <span class="label">Issue:</span> {issue_desc}
-                    </div>
-            """
-            
-            if element:
-                # Escape HTML tags for display
-                safe_element = html_escape(str(element))
-                html_content += f"""
-                    <div class="row" style="margin-top: 15px;">
-                        <span class="label" style="display: block; margin-bottom: 5px;">Selector/Element:</span>
-                        <div class="code-block">{safe_element}</div>
-                    </div>
+                        {f'<div class="url-source">{url}</div>' if url else ''}
+                        
+                        <div class="row">
+                            <div class="label">Impact</div>
+                            <div class="value">{impact}</div>
+                        </div>
+                        <div class="row">
+                            <div class="label">Diagnosis</div>
+                            <div class="value">{issue_desc}</div>
+                        </div>
                 """
                 
-            html_content += f"""
-                    <div class="fix-block">
-                        <div class="fix-title">Recommended Fix:</div>
-                        <div>{fix}</div>
+                if element:
+                    safe_element = html_escape(str(element))
+                    html_content += f"""
+                        <div class="row" style="margin-top: 16px; flex-direction: column;">
+                            <div class="label" style="margin-bottom: 8px;">DOM Signature</div>
+                            <div class="code-block">{safe_element}</div>
+                        </div>
+                    """
+                    
+                html_content += f"""
+                        <div class="fix-block">
+                            <div class="fix-icon">🛠️</div>
+                            <div class="fix-content">
+                                <div class="fix-title">Remediation Vector</div>
+                                <div>{fix}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="conf-bar-container">
+                            <div class="conf-bar" style="width: {conf_pct}%;"></div>
+                        </div>
+                        <span class="conf-text">AI Confidence Score: {conf_pct:.1f}%</span>
                     </div>
-                </div>
-            """
-            html += html_content
-            global_idx += 1
+                """
+                html += html_content
+                global_idx += 1
 
     html += """
         </div>
     </body>
     </html>
     """
-    
     return html
 
+
+def _render_chunks_to_pdfs(chunks_data: list, output_dir: str):
+    """
+    Renders multiple HTML contents to their respective PDF paths using a single Playwright browser instance.
+    chunks_data: list of tuples (html_content, output_pdf_path)
+    """
+    import tempfile
+    import pathlib
+    
+    temp_files = []
+    try:
+        tasks = []
+        for html_content, pdf_path in chunks_data:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8", dir=output_dir) as temp_html:
+                temp_html.write(html_content)
+                temp_html_path = temp_html.name
+            temp_files.append(temp_html_path)
+            tasks.append((temp_html_path, pdf_path))
+            
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=['--disable-dev-shm-usage'])
+            context = browser.new_context(java_script_enabled=False)
+            page = context.new_page()
+            page.emulate_media(media="print")
+            page.set_default_timeout(0) # Uncap engine limits for massive PDF generations
+            
+            for temp_html_path, pdf_path in tasks:
+                file_uri = pathlib.Path(temp_html_path).as_uri()
+                page.goto(file_uri, wait_until="domcontentloaded", timeout=120000)
+                page.pdf(
+                    path=pdf_path,
+                    format="Letter",
+                    landscape=True,
+                    print_background=True,
+                    margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
+                )
+            browser.close()
+    except Exception as e:
+        safe_msg = repr(e).encode('ascii', 'replace').decode('ascii')
+        print(f"Playwright error during PDF rendering: {safe_msg}")
+        raise RuntimeError(f"Playwright PDF Engine Error: {safe_msg}")
+    finally:
+        for path in temp_files:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as cleanup_err:
+                    print(f"Cleanup warning: Could not remove temporary HTML {path}: {cleanup_err}")
 
 def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     """
     Reads a JSON findings file, generates an HTML report, and
     uses Playwright to convert the HTML to a PDF. Can handle massive reports
     by writing to a temporary file before rendering.
+    Uses PDF chunking and stitching to prevent OOM / layout engine crashes on massive datasets.
     """
-    import tempfile
-    import pathlib
-    
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    html_content = generate_html_from_json(data)
-    
-    print(f"Generating PDF for {len(data.get('findings', []))} findings...")
-    
-    # Write to a temporary HTML file to bypass Playwright IPC string size limits
+    raw_findings = data.get('findings', data.get('violations', []))
+    findings = list(raw_findings) if raw_findings is not None else []
+    total_findings = len(findings)
+    print(f"Total findings to render: {total_findings}")
+
+    # Threshold for chunking (switch to chunking if dataset is massive)
+    CHUNK_THRESHOLD = 300
+    CHUNK_SIZE = 1500
+
     output_dir = os.path.dirname(os.path.abspath(output_pdf_path))
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8", dir=output_dir) as temp_html:
-        temp_html.write(html_content)
-        temp_html_path = temp_html.name
-        
+
+    if total_findings <= CHUNK_THRESHOLD:
+        # Standard rendering flow (no chunking needed)
+        html_content = generate_html_from_json(data)
+        _render_chunks_to_pdfs([(html_content, output_pdf_path)], output_dir)
+        return
+
+    # Option 2: Chunking & Stitching Flow
+    print(f"Dataset exceeds threshold ({total_findings} > {CHUNK_THRESHOLD}). Activating PDF Chunking & Stitching...")
+    
+    # Dynamically verify / install pypdf
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=['--disable-dev-shm-usage'])
-            context = browser.new_context(java_script_enabled=False)
-            page = context.new_page()
-            
-            # Safe rendering by loading local file
-            file_uri = pathlib.Path(temp_html_path).as_uri()
-            page.goto(file_uri, wait_until="networkidle", timeout=60000)
-            page.emulate_media(media="print")
-            
-            page.pdf(
-                path=output_pdf_path,
-                format="A4",
-                print_background=True,
-                margin={"top": "20px", "right": "20px", "bottom": "20px", "left": "20px"}
-            )
-            browser.close()
-            
-        print(f"Successfully created PDF: {output_pdf_path}")
-    except Exception as e:
-        print(f"Playwright error during PDF rendering: {e}")
-        # In a multiprocessing environment, print to stdout as it might not land in the logger easily
-        raise e
+        import pypdf
+    except ImportError:
+        print("pypdf is missing. Dynamically installing pypdf...")
+        import subprocess
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "pypdf"])
+            import pypdf
+        except Exception as inst_err:
+            print(f"Warning: Failed to install pypdf via pip: {inst_err}.")
+            raise RuntimeError(f"Required dependency pypdf is missing and could not be installed: {inst_err}")
+
+    # Split findings into chunks
+    chunks = [findings[i:i + CHUNK_SIZE] for i in range(0, total_findings, CHUNK_SIZE)]
+    
+    # Build list of rendering tasks
+    render_tasks = []
+    temp_pdf_paths = []
+    
+    for index, chunk in enumerate(chunks):
+        hide_header = index > 0
+        html_content = generate_html_from_json(data, override_findings=chunk, hide_header=hide_header)
+        temp_pdf_path = os.path.join(output_dir, f"temp_chunk_{index}_{os.path.basename(output_pdf_path)}")
+        render_tasks.append((html_content, temp_pdf_path))
+        temp_pdf_paths.append(temp_pdf_path)
+
+    try:
+        print(f"Rendering {len(render_tasks)} PDF chunks to disk using single Playwright context...")
+        _render_chunks_to_pdfs(render_tasks, output_dir)
+
+        # Merge PDFs using pypdf
+        print("Stitching PDF chunks together...")
+        try:
+            from pypdf import PdfWriter
+        except ImportError:
+            from pypdf import PdfFileWriter as PdfWriter
+        
+        merger = PdfWriter()
+        for path in temp_pdf_paths:
+            merger.append(path)
+        
+        merger.write(output_pdf_path)
+        merger.close()
+        print(f"Successfully created stitched PDF: {output_pdf_path}")
+
     finally:
-        if os.path.exists(temp_html_path):
-            os.remove(temp_html_path)
+        # Cleanup temporary PDF files
+        for path in temp_pdf_paths:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as cleanup_err:
+                    print(f"Cleanup warning: Could not remove temporary PDF chunk {path}: {cleanup_err}")
 
 if __name__ == "__main__":
     import argparse

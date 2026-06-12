@@ -250,14 +250,15 @@ class AuditService:
                             rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}",
                             impact=impact,
                             agent=agent_type,
-                            description=f"[{af.agent.upper()} AGENT] {af.issue} (Confidence: {af.confidence}). Fix Recommended: {af.fix}",
+                            description=f"[{af.agent.upper()} AGENT] {af.issue}. Fix Recommended: {af.fix}",
                             help_url=f"https://www.w3.org/WAI/WCAG22/Techniques/general/{af.guideline}",
                             session_id=session.id, # type: ignore
                             tags=tags,
                             compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
                             category=ComplianceMapper.get_category(tags, rule_id=f"AGENT-{af.agent.upper()}-{af.guideline}", agent=agent_type),
                             severity_matrix=ComplianceMapper.get_severity_matrix(impact),
-                            url=url
+                            url=url,
+                            confidence_score=af.confidence
                         )
                         v.nodes = [{"target": [af.selector], "html": af.element, "failure_summary": af.issue}]
                         v.selector = af.selector

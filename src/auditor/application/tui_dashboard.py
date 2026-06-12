@@ -71,16 +71,18 @@ class AuditorDashboard:
         try:
             await self.queue.connect()
             size = await self.queue.get_queue_size()
+            workers = await self.queue.get_active_workers()
             await self.queue.disconnect()
         except:
             size = "ERR"
+            workers = "ERR"
             
         table = Table(box=box.SIMPLE, expand=True)
         table.add_column("Metric", style="magenta")
         table.add_column("Status", justify="right")
         table.add_row("Redis Cluster", "[green]ONLINE[/]")
         table.add_row("Pending Tasks", f"[bold white]{size}[/]")
-        table.add_row("Active Workers", "[cyan]3[/]") # Mocked for now
+        table.add_row("Active Workers", f"[cyan]{workers}[/]")
         
         return Panel(table, title="[b]Orchestration Layer[/b]", border_style="magenta")
 

@@ -65,6 +65,31 @@ class Neo4jRepository:
         except Exception:
             return False
 
+    def _run_with_retry(self, action):
+        """
+        Executes a database action (which takes a session) with automatic fallback retry
+        if a DatabaseNotFound (CLIENT_ERROR Neo.ClientError.Database.DatabaseNotFound) occurs.
+        """
+        if not self.driver:
+            return None
+        
+        try:
+            with self.driver.session(database=self.database) as session:
+                return action(session)
+        except Exception as e:
+            err_str = str(e)
+            if "DatabaseNotFound" in err_str or "database not found" in err_str.lower() or "42N00" in err_str:
+                # Toggle self.database
+                old_db = self.database
+                self.database = None if self.database is not None else "neo4j"
+                self.logger.warning(
+                    f"Neo4j DatabaseNotFound for database={old_db}. "
+                    f"Retrying with database={self.database}"
+                )
+                with self.driver.session(database=self.database) as session:
+                    return action(session)
+            raise e
+
     async def upsert_page_link_async(self, source_url: str, target_url: str, domain_url: str):
         if not self.driver:
             return
@@ -85,18 +110,18 @@ class Neo4jRepository:
                 self.logger.error(f"Async Page Link Error: {type(e).__name__} - {e}")
 
     def _upsert_page_link_sync(self, source_url: str, target_url: str, domain_url: str):
-        if not self.driver:
-            return
+        def action(session):
+            query = """
+            MERGE (d:Domain {url: $domain_url})
+            MERGE (s:Page {url: $source_url})
+            MERGE (t:Page {url: $target_url})
+            MERGE (d)-[:DOMAIN_OWNS_PAGE]->(s)
+            MERGE (s)-[:PAGE_LINKS_TO]->(t)
+            """
+            session.run(query, domain_url=domain_url, source_url=source_url, target_url=target_url)
+
         try:
-            with self.driver.session(database=self.database) as session:
-                query = """
-                MERGE (d:Domain {url: $domain_url})
-                MERGE (s:Page {url: $source_url})
-                MERGE (t:Page {url: $target_url})
-                MERGE (d)-[:DOMAIN_OWNS_PAGE]->(s)
-                MERGE (s)-[:PAGE_LINKS_TO]->(t)
-                """
-                session.run(query, domain_url=domain_url, source_url=source_url, target_url=target_url)
+            self._run_with_retry(action)
         except Exception as e:
             self.logger.error(f"Sync Page Link Error: {e}")
 
@@ -120,8 +145,6 @@ class Neo4jRepository:
                 self.logger.error(f"Async Component Error: {type(e).__name__} - {e}")
 
     def _upsert_component_violation_sync(self, page_url: str, violation: Violation, node_html: str):
-        if not self.driver:
-            return
         try:
             footprint = hashlib.sha256(node_html.encode("utf-8")).hexdigest()
             snippet_preview = node_html[:150]
@@ -138,13 +161,13 @@ class Neo4jRepository:
                 else str(violation.impact)
             )
 
-            with self.driver.session(database=self.database) as session:
+            def action(session):
                 query = """
                 MERGE (p:Page {url: $page_url})
                 MERGE (c:Component {id: $footprint})
                 ON CREATE SET c.footprint_hash = $footprint, c.snippet = $snippet_preview
                 MERGE (v:Violation {id: $rule_id})
-                ON CREATE SET v.rule_id = $rule_id, v.impact = $impact_val
+                ON CREATE SET v.rule_id = $rule_id, v.impact = $impact_val, v.confidence_score = $confidence_score, v.verification_status = $verification_status
                 MERGE (s:ComplianceStandard {id: $standard_id})
                 ON CREATE SET s.name = $standard_id
 
@@ -159,111 +182,107 @@ class Neo4jRepository:
                     snippet_preview=snippet_preview,
                     rule_id=violation.rule_id,
                     impact_val=impact_val,
-                    standard_id=standard_id
+                    standard_id=standard_id,
+                    confidence_score=getattr(violation, 'confidence_score', None),
+                    verification_status=getattr(violation, 'verification_status', "unverified")
                 )
+
+            self._run_with_retry(action)
         except Exception as e:
             self.logger.error(f"Sync Component Error: {e}")
 
     def get_graph_data(self) -> dict:
-        if not self.driver:
-            return {"nodes": [], "links": []}
         try:
-            with self.driver.session(database=self.database) as session:
+            def action(session):
                 query = """
                 MATCH (n)
                 OPTIONAL MATCH (n)-[r]->(m)
                 RETURN n, r, m
                 """
-                result = session.run(query)
-                nodes = {}
-                links = []
+                return list(session.run(query))
+            
+            records = self._run_with_retry(action)
+            if not records:
+                return {"nodes": [], "links": []}
 
-                for record in result:
-                    n = record["n"]
-                    if n:
-                        # Extract unique node element identifier
-                        node_ref = n.element_id if hasattr(n, "element_id") else n.id
-                        labels = list(n.labels)
-                        
-                        if "Page" in labels:
-                            nodes[node_ref] = {
-                                "id": n.get("url"),
-                                "label": n.get("url")[:30] + "...",
-                                "type": "page"
-                            }
-                        elif "Component" in labels:
-                            nodes[node_ref] = {
-                                "id": n.get("id"),
-                                "label": "DOM Element",
-                                "type": "component"
-                            }
-                        elif "Violation" in labels:
-                            impact = n.get("impact", "minor")
-                            node_type = "violation_critical" if impact.lower() == "critical" else (
-                                "violation_major" if impact.lower() in ("major", "serious") else "violation"
-                            )
-                            nodes[node_ref] = {
-                                "id": n.get("id"),
-                                "label": n.get("id"),
-                                "type": node_type
-                            }
-                        elif "Domain" in labels:
-                            nodes[node_ref] = {
-                                "id": n.get("url"),
-                                "label": n.get("url"),
-                                "type": "page"
-                            }
-                        elif "ComplianceStandard" in labels:
-                            nodes[node_ref] = {
-                                "id": n.get("id"),
-                                "label": n.get("name"),
-                                "type": "page"
-                            }
+            nodes = {}
+            links = []
 
-                    r = record["r"]
-                    m = record["m"]
-                    if r and m:
-                        source_node = n
-                        target_node = m
-                        
-                        source_id = source_node.get("url") if ("Page" in source_node.labels or "Domain" in source_node.labels) else source_node.get("id")
-                        target_id = target_node.get("url") if ("Page" in target_node.labels or "Domain" in target_node.labels) else target_node.get("id")
-                        
-                        if source_id and target_id:
-                            links.append({
-                                "source": source_id,
-                                "target": target_id
-                            })
+            for record in records:
+                n = record["n"]
+                if n:
+                    # Extract unique node element identifier
+                    node_ref = n.element_id if hasattr(n, "element_id") else n.id
+                    labels = list(n.labels)
+                    
+                    if "Page" in labels:
+                        nodes[node_ref] = {
+                            "id": n.get("url"),
+                            "label": n.get("url")[:30] + "...",
+                            "type": "page"
+                        }
+                    elif "Component" in labels:
+                        nodes[node_ref] = {
+                            "id": n.get("id"),
+                            "label": "DOM Element",
+                            "type": "component"
+                        }
+                    elif "Violation" in labels:
+                        impact = n.get("impact", "minor")
+                        node_type = "violation_critical" if impact.lower() == "critical" else (
+                            "violation_major" if impact.lower() in ("major", "serious") else "violation"
+                        )
+                        nodes[node_ref] = {
+                            "id": n.get("id"),
+                            "label": n.get("id"),
+                            "type": node_type
+                        }
+                    elif "Domain" in labels:
+                        nodes[node_ref] = {
+                            "id": n.get("url"),
+                            "label": n.get("url"),
+                            "type": "page"
+                        }
+                    elif "ComplianceStandard" in labels:
+                        nodes[node_ref] = {
+                            "id": n.get("id"),
+                            "label": n.get("name"),
+                            "type": "page"
+                        }
 
-                # Deduplicate elements
-                unique_nodes = list(nodes.values())
-                seen_links = set()
-                unique_links = []
-                for l in links:
-                    key = (l["source"], l["target"])
-                    if key not in seen_links:
-                        seen_links.add(key)
-                        unique_links.append(l)
+                r = record["r"]
+                m = record["m"]
+                if r and m:
+                    source_node = n
+                    target_node = m
+                    
+                    source_id = source_node.get("url") if ("Page" in source_node.labels or "Domain" in source_node.labels) else source_node.get("id")
+                    target_id = target_node.get("url") if ("Page" in target_node.labels or "Domain" in target_node.labels) else target_node.get("id")
+                    
+                    if source_id and target_id:
+                        links.append({
+                            "source": source_id,
+                            "target": target_id
+                        })
 
-                return {"nodes": unique_nodes, "links": unique_links}
+            # Deduplicate elements
+            unique_nodes = list(nodes.values())
+            seen_links = set()
+            unique_links = []
+            for l in links:
+                key = (l["source"], l["target"])
+                if key not in seen_links:
+                    seen_links.add(key)
+                    unique_links.append(l)
+
+            return {"nodes": unique_nodes, "links": unique_links}
         except Exception as e:
             self.logger.error(f"Error fetching Neo4j graph data: {e}")
             return {"nodes": [], "links": []}
 
     def get_graph_insights(self) -> dict:
-        if not self.driver:
-            return {
-              "impact_probability": "High",
-              "top_node": "DOM Root",
-              "component_id": "root",
-              "reach": 0,
-              "violations_prevented": 0,
-              "structural_complexity": "O(1)",
-              "recommended": True,
-              "specific_fix": "None"
-            }
         try:
-            with self.driver.session(database=self.database) as session:
+            def action(session):
                 counts_query = """
                 OPTIONAL MATCH (p:Page) WITH count(p) as page_count
                 OPTIONAL MATCH (c:Component) WITH page_count, count(c) as component_count
@@ -272,13 +291,7 @@ class Neo4jRepository:
                 """
                 res = session.run(counts_query)
                 record = res.single()
-                if record:
-                    page_count = record["page_count"] or 0
-                    component_count = record["component_count"] or 0
-                    violation_count = record["violation_count"] or 0
-                else:
-                    page_count, component_count, violation_count = 0, 0, 0
-
+                
                 top_node_query = """
                 MATCH (c:Component)<-[:PAGE_CONTAINS]-(p:Page)
                 WITH c, count(p) as page_reach
@@ -287,29 +300,44 @@ class Neo4jRepository:
                 """
                 res2 = session.run(top_node_query)
                 record2 = res2.single()
-                if record2:
-                    top_node = record2["snippet"] or "Dynamic Component"
-                    if len(top_node) > 30:
-                        top_node = top_node[:30] + "..."
-                    component_id = record2["footprint"]
-                    reach = record2["page_reach"]
-                else:
-                    top_node = "DOM Root"
-                    component_id = "root"
-                    reach = 0
+                return record, record2
 
-                impact_prob = "Critical" if violation_count > 10 else ("Moderate" if violation_count > 0 else "Low")
-                
-                return {
-                  "impact_probability": impact_prob,
-                  "top_node": top_node,
-                  "component_id": component_id,
-                  "reach": reach,
-                  "violations_prevented": violation_count,
-                  "structural_complexity": f"O({component_count * max(1, page_count)})",
-                  "recommended": violation_count > 0,
-                  "specific_fix": "Patch core template component to fix child tree."
-                }
+            res_tuple = self._run_with_retry(action)
+            if res_tuple:
+                record, record2 = res_tuple
+            else:
+                record, record2 = None, None
+
+            if record:
+                page_count = record["page_count"] or 0
+                component_count = record["component_count"] or 0
+                violation_count = record["violation_count"] or 0
+            else:
+                page_count, component_count, violation_count = 0, 0, 0
+
+            if record2:
+                top_node = record2["snippet"] or "Dynamic Component"
+                if len(top_node) > 30:
+                    top_node = top_node[:30] + "..."
+                component_id = record2["footprint"]
+                reach = record2["page_reach"]
+            else:
+                top_node = "DOM Root"
+                component_id = "root"
+                reach = 0
+
+            impact_prob = "Critical" if violation_count > 10 else ("Moderate" if violation_count > 0 else "Low")
+            
+            return {
+              "impact_probability": impact_prob,
+              "top_node": top_node,
+              "component_id": component_id,
+              "reach": reach,
+              "violations_prevented": violation_count,
+              "structural_complexity": f"O({component_count * max(1, page_count)})",
+              "recommended": violation_count > 0,
+              "specific_fix": "Patch core template component to fix child tree."
+            }
         except Exception as e:
             self.logger.exception("Error fetching Neo4j graph insights")
             return {
@@ -341,19 +369,19 @@ class Neo4jRepository:
                 self.logger.exception("Async Page Links Batch Error")
 
     def _upsert_page_links_batch_sync(self, batch: List[dict]):
-        if not self.driver:
-            return
+        def action(session):
+            query = """
+            UNWIND $batch AS item
+            MERGE (d:Domain {url: item.domain_url})
+            MERGE (s:Page {url: item.source_url})
+            MERGE (t:Page {url: item.target_url})
+            MERGE (d)-[:DOMAIN_OWNS_PAGE]->(s)
+            MERGE (s)-[:PAGE_LINKS_TO]->(t)
+            """
+            session.run(query, batch=batch)
+
         try:
-            with self.driver.session(database=self.database) as session:
-                query = """
-                UNWIND $batch AS item
-                MERGE (d:Domain {url: item.domain_url})
-                MERGE (s:Page {url: item.source_url})
-                MERGE (t:Page {url: item.target_url})
-                MERGE (d)-[:DOMAIN_OWNS_PAGE]->(s)
-                MERGE (s)-[:PAGE_LINKS_TO]->(t)
-                """
-                session.run(query, batch=batch)
+            self._run_with_retry(action)
         except Exception as e:
             self.logger.exception("Sync Page Links Batch Error")
 
@@ -375,8 +403,6 @@ class Neo4jRepository:
                 self.logger.exception("Async Component Batch Error")
 
     def _upsert_component_violations_batch_sync(self, batch: List[dict]):
-        if not self.driver:
-            return
         try:
             params = []
             for item in batch:
@@ -403,7 +429,7 @@ class Neo4jRepository:
                     "standard_id": standard_id
                 })
 
-            with self.driver.session(database=self.database) as session:
+            def action(session):
                 query = """
                 UNWIND $batch AS item
                 MERGE (p:Page {url: item.page_url})
@@ -419,6 +445,7 @@ class Neo4jRepository:
                 MERGE (v)-[:VIOLATION_FAILS]->(s)
                 """
                 session.run(query, batch=params)
+
+            self._run_with_retry(action)
         except Exception as e:
             self.logger.exception("Sync Component Batch Error")
-

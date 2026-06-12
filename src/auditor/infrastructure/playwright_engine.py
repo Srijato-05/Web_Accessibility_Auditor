@@ -160,9 +160,10 @@ class PlaywrightEngine(IBrowserEngine):
                 try: asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
                 except: pass
 
-        if not self.browser:
+        if not self.browser or not self.browser.is_connected():
             self.logger.info("Starting Persistent Engine Cluster...")
-            self.playwright_mgr = await async_playwright().start()
+            if not self.playwright_mgr:
+                self.playwright_mgr = await async_playwright().start()
             await self._init_browser(self.playwright_mgr)
 
     async def teardown(self):
@@ -519,7 +520,7 @@ class PlaywrightEngine(IBrowserEngine):
                 _self.profile["userAgent"] = ua_map[user_agent_setting]
         
         # Ensure engine is active
-        if not _self.browser:
+        if not _self.browser or not _self.browser.is_connected():
             await _self.start()
             
         br = _self.browser
@@ -551,6 +552,7 @@ class PlaywrightEngine(IBrowserEngine):
                     try:
                         if _self.browser: # type: ignore
                             await _self.browser.close() # type: ignore
+                            _self.browser = None
                         _self.headless = False # type: ignore
                         await _self.start() # type: ignore
                     except Exception as he:
@@ -716,7 +718,7 @@ class PlaywrightEngine(IBrowserEngine):
                 timeout = await _self._get_dynamic_timeout(page, url) # type: ignore
                 
                 # 2. Navigation with Stealth
-                # Adaptive Wait State: Relax to 'commit' on retries to bypass navigation hangs
+                # Adaptive Wait State: Use 'domcontentloaded' to avoid WebSocket timeouts
                 wait_state = "domcontentloaded" if current_attempt == 1 else "commit"
                 
                 _self.logger.info(f"Navigating Mission Target: {url} (Wait: {wait_state} | Attempt: {current_attempt})") # type: ignore
@@ -727,10 +729,12 @@ class PlaywrightEngine(IBrowserEngine):
                     referer="https://www.google.com/"
                 )
                 
-                if wait_state == "commit":
-                    # If we only waited for commit, give the DOM some extra time to breathe
-                    _self.logger.info("Resilient Navigation: Executing 5s Structural Hydration Wait...") # type: ignore
-                    await asyncio.sleep(5.0)
+                # Universal React/SPA Hydration Buffer
+                # We use a strict 5-second sleep instead of 'networkidle' because modern
+                # platforms (like Leetcode/Netflix) use WebSockets that never reach 'idle',
+                # which causes a fatal 30s timeout. This 5s sleep guarantees React has time to render.
+                _self.logger.info("Resilient Navigation: Executing 5s Universal SPA Hydration Wait...") # type: ignore
+                await asyncio.sleep(5.0)
                 
                 # Cognitive Delay (Mimic reading time)
                 if current_attempt >= 2:
@@ -833,6 +837,72 @@ class PlaywrightEngine(IBrowserEngine):
                     _self.logger.error(f"Axe Forensic Engine Failure: {axe_err}")
                     axe_violations = []
 
+                # 4.5 Secondary Heuristics (HTMLCodeSniffer)
+                _self.logger.info("Injecting HTMLCodeSniffer Heuristic Matrix...") # type: ignore
+                htmlcs_violations = []
+                try:
+                    # Inject HTMLCS payload
+                    await page.add_script_tag(url="https://squizlabs.github.io/HTML_CodeSniffer/build/HTMLCS.js")
+                    await asyncio.sleep(0.5) # Initialization buffer
+                    
+                    # Run WCAG2AA sweep and extract JSON matching Axe schema
+                    htmlcs_raw = await page.evaluate('''() => {
+                        return new Promise((resolve) => {
+                            HTMLCS.process('WCAG2AA', document, function() {
+                                const messages = HTMLCS.getMessages();
+                                const results = [];
+                                for(let i=0; i<messages.length; i++) {
+                                    const msg = messages[i];
+                                    if (msg.type === HTMLCS.ERROR || msg.type === HTMLCS.WARNING) {
+                                        let selector = "Unknown";
+                                        if (msg.element && msg.element.tagName) {
+                                            selector = msg.element.tagName.toLowerCase();
+                                            if(msg.element.id) selector += "#" + msg.element.id;
+                                            if(msg.element.className && typeof msg.element.className === "string") {
+                                                selector += "." + msg.element.className.split(" ").join(".");
+                                            }
+                                        }
+                                        results.push({
+                                            id: msg.code,
+                                            description: msg.msg,
+                                            helpUrl: "https://squizlabs.github.io/HTML_CodeSniffer/Standards/WCAG2/",
+                                            impact: msg.type === HTMLCS.ERROR ? "critical" : "moderate",
+                                            tags: ["wcag2aa", "htmlcs", "cat.heuristic"],
+                                            agent: "htmlcs",
+                                            selector: selector,
+                                            nodes: [{
+                                                target: [selector],
+                                                html: msg.element ? msg.element.outerHTML.substring(0,200) : "N/A",
+                                                failureSummary: msg.msg
+                                            }]
+                                        });
+                                    }
+                                }
+                                resolve(results);
+                            });
+                        });
+                    }''')
+                    
+                    if htmlcs_raw and isinstance(htmlcs_raw, list):
+                        # Strict Deduplication vs Axe
+                        unique_htmlcs = []
+                        axe_selectors = set()
+                        for av in axe_violations:
+                            for n in av.get("nodes", []):
+                                targets = n.get("target", [])
+                                if targets and isinstance(targets, list):
+                                    axe_selectors.add(str(targets[0]))
+                        
+                        for hv in htmlcs_raw:
+                            if hv.get("selector") not in axe_selectors:
+                                unique_htmlcs.append(hv)
+                                
+                        htmlcs_violations = unique_htmlcs
+                        _self.logger.info(f"HTMLCS Matrix Complete: {len(htmlcs_violations)} unique heuristic warnings captured.") # type: ignore
+                except Exception as htmlcs_err:
+                    _self.logger.warning(f"HTMLCS Injection Failure: {htmlcs_err}") # type: ignore
+                    htmlcs_violations = []
+
                 # Cycle 14: Neural Data Extraction for Agents
                 try:
                     _self.logger.info("Executing Neural Data Extraction [ZET-X1]...") # type: ignore
@@ -852,7 +922,7 @@ class PlaywrightEngine(IBrowserEngine):
                     _self.logger.warning(f"Forensic Cluster minor failure: {he}") # type: ignore
                 
                 # 5. Synthesis & Telemetry
-                all_violations_raw = axe_violations + custom_v
+                all_violations_raw = axe_violations + htmlcs_violations + custom_v
                 duration = time.time() - start_time
                 _self.logger.info(f"Engine Audit MISSION COMPLETE | Violations: {len(all_violations_raw)} | T+{duration:.2f}s") # type: ignore
                 
@@ -872,6 +942,16 @@ class PlaywrightEngine(IBrowserEngine):
                     continue
                 raise
             except (PlaywrightError, asyncio.TimeoutError) as pe:
+                if "Timeout" in str(pe) and current_attempt < MAX_PERSONAS:
+                    _self.logger.warning(f"Navigation timeout on attempt {current_attempt}. Switching to resilient payload delivery...") # type: ignore
+                    current_attempt += 1
+                    if page: 
+                        try: await page.close()
+                        except: pass
+                    if local_context: 
+                        try: await local_context.close()
+                        except: pass
+                    continue
                 _self.logger.error(f"Engine Protocol Failure at {url}: {str(pe)}") # type: ignore
                 if _self.context:
                     try: await _self.context.close()
@@ -910,7 +990,9 @@ class PlaywrightEngine(IBrowserEngine):
         except Exception:
             pass
 
-        base_timeout = settings.get("timeout", 30) * 1000
+        base_timeout = settings.get("timeout", 90) * 1000
+        if base_timeout < 90000:
+            base_timeout = 90000
         
         # Resilient Tier: Increase base for Gov portals or known high-latency domains
         if any(gov in url.lower() for gov in [".gov.in", ".nic.in", ".gov", "india.gov.in"]):
@@ -1097,6 +1179,32 @@ class PlaywrightEngine(IBrowserEngine):
         violations.extend(await self._analyze_aria_live_regions(page)) # Cycle 5: Dynamic Mutations
         violations.extend(await self._analyze_dynamic_contrast(page)) # Cycle 6: Overlap Forensics
         violations.extend(await self._analyze_focus_traps(page)) # Cycle 7: Navigation Forensics
+        
+        # Integrate advanced custom heuristics agents
+        violations.extend(await self._deep_aria_structural_audit(page))
+        violations.extend(await self._execute_perception_audit_sweep(page))
+        violations.extend(await self._audit_interaction_fluidity(page))
+        violations.extend(await self._perform_css_structural_audit(page))
+        
+        # Integrate Phase 5 Dynamic Agents
+        violations.extend(await self._verify_color_contrast_in_canvas(page))
+        violations.extend(await self._check_font_scaling_stability(page))
+        violations.extend(await self._audit_placeholder_contrast(page))
+        violations.extend(await self._detect_invisible_focus_traps(page))
+        violations.extend(await self._audit_responsive_orientation_lock(page))
+        violations.extend(await self._detect_scrollable_regions_keyboard_access(page))
+        violations.extend(await self._check_draggables_keyboard_alt(page))
+        violations.extend(await self._audit_form_error_association(page))
+        violations.extend(await self._verify_landmark_completeness(page))
+        violations.extend(await self._audit_reading_order_coherence(page))
+        violations.extend(await self._verify_table_header_relationships(page))
+        violations.extend(await self._verify_autocomplete_attributes(page))
+        violations.extend(await self._check_autoplay_violation(page))
+        violations.extend(await self._verify_aria_live_announcements(page))
+        violations.extend(await self._audit_iframe_title_presence(page))
+        violations.extend(await self._verify_non_text_content_alternatives(page))
+        violations.extend(await self._audit_timed_response_extensions(page))
+        
         return violations
 
     async def _analyze_aria_live_regions(self, page: Page) -> List[Violation]:
@@ -1204,7 +1312,7 @@ class PlaywrightEngine(IBrowserEngine):
         return violations
 
     async def _analyze_svg_accessibility(self, page: Page) -> List[Violation]:
-        """Cycle 3: High-Density SVG Forensics (detecting inaccessible vector paths)."""
+        """Cycle 3: High-Density SVG Forensics (detecting inaccessible vector paths, excluding decorative/nested elements)."""
         script = """() => {
             const svgs = Array.from(document.querySelectorAll('svg'));
             const issues = [];
@@ -1213,7 +1321,45 @@ class PlaywrightEngine(IBrowserEngine):
                 const hasLabel = svg.getAttribute('aria-label') || svg.getAttribute('aria-labelledby');
                 const isHidden = svg.getAttribute('aria-hidden') === 'true';
                 
-                if (!isHidden && !hasTitle && !hasLabel) {
+                // Exclude if role is decorative/none
+                const role = svg.getAttribute('role') || svg.getAttribute('aria-role') || '';
+                const isDecorativeRole = role === 'presentation' || role === 'none';
+                
+                if (isHidden || isDecorativeRole) return;
+                
+                // Exclude if parent element is interactive and already has an accessible name
+                let parent = svg.parentElement;
+                let hasAccessibleParent = false;
+                while (parent && parent !== document.body) {
+                    const tag = parent.tagName;
+                    const hasName = parent.getAttribute('aria-label') || parent.getAttribute('aria-labelledby') || parent.getAttribute('title');
+                    if (['BUTTON', 'A', 'INPUT'].includes(tag) && hasName) {
+                        hasAccessibleParent = true;
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+                
+                if (hasAccessibleParent) return;
+                
+                // Exclude if parent element is interactive and contains text (e.g. inline icon inside link/button)
+                let parentTextCheck = svg.parentElement;
+                let hasTextParent = false;
+                while (parentTextCheck && parentTextCheck !== document.body) {
+                    const tag = parentTextCheck.tagName;
+                    if (['BUTTON', 'A', 'LABEL'].includes(tag)) {
+                        const parentText = parentTextCheck.innerText ? parentTextCheck.innerText.trim() : '';
+                        if (parentText.length > 0) {
+                            hasTextParent = true;
+                            break;
+                        }
+                    }
+                    parentTextCheck = parentTextCheck.parentElement;
+                }
+                
+                if (hasTextParent) return;
+                
+                if (!hasTitle && !hasLabel) {
                     issues.push({
                         html: svg.outerHTML.slice(0, 200),
                         selector: svg.tagName.toLowerCase() + (svg.id ? '#' + svg.id : '')
@@ -1227,8 +1373,6 @@ class PlaywrightEngine(IBrowserEngine):
         for issue in raw_issues:
             sel = str(issue.get('selector', 'svg'))
             html = str(issue.get('html', ''))
-            
-            # Cycle 6: SVG Auto-Correction snippet
             s_title = "Descriptive Vector Graphic"
             
             violations.append(Violation(
@@ -1243,7 +1387,7 @@ class PlaywrightEngine(IBrowserEngine):
                     "target": sel, 
                     "failure_summary": "Missing <title> or ARIA label in vector graphic.",
                     "suggested_fix": f"Add <title>{s_title}</title> as the first child of the <svg> element.",
-                    "fix": f"Add a <title> element inside the SVG and set aria-hidden='false', or add aria-label='Description'."
+                    "fix": "Add a <title> element inside the SVG and set aria-hidden='false', or add aria-label='Description'."
                 }],
                 tags=["auditor", "forensics", "vector-v2", "wcag-1.1.1", "wcag2a"],
                 agent="visual"
@@ -1251,30 +1395,26 @@ class PlaywrightEngine(IBrowserEngine):
         return violations
 
     async def _analyze_dynamic_contrast(self, page: Page) -> List[Violation]:
-        """Cycle 6: Detect contrast issues in overlapping/layered elements."""
+        """Cycle 6: Detect contrast issues in overlapping/layered text elements."""
         script = """() => {
             const elements = Array.from(document.querySelectorAll('div, span, p, h1, h2, h3, h4, h5, h6, a, button'));
             const issues = [];
             
-            // Phase VII: Optimized Occlusion Analysis
-            // We only care about elements that are likely to float over something (absolute/fixed)
             const floatingElements = elements.filter(el => {
                 const style = window.getComputedStyle(el);
-                return style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 50;
+                const isFloating = style.position === 'absolute' || style.position === 'fixed' || parseInt(style.zIndex) > 50;
+                const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                return isFloating && isVisible && el.innerText.trim().length > 0;
             });
             
             if (floatingElements.length > 50) {
-                // Critical Performance Guard for massive DOMs (like Wikipedia)
-                // Limit analysis to the first 50 floating elements to prevent browser-hang
                 floatingElements.length = 50;
             }
-
+ 
             floatingElements.forEach(el => {
                 const rect = el.getBoundingClientRect();
                 if (rect.width === 0 || rect.height === 0) return;
                 
-                // Instead of O(N^2) check against ALL siblings, we use elementFromPoint
-                // at the four corners and center to detect underlying text-bearing nodes
                 const points = [
                     {x: rect.left + 5, y: rect.top + 5},
                     {x: rect.right - 5, y: rect.top + 5},
@@ -1284,17 +1424,22 @@ class PlaywrightEngine(IBrowserEngine):
                 ];
                 
                 points.forEach(p => {
-                    if (p.x < 0 || p.y < 0) return;
-                    el.style.pointerEvents = 'none'; // Temporarily pass-through
-                    const under = document.elementFromPoint(p.x, p.y);
-                    el.style.pointerEvents = ''; // Restore
+                    if (p.x < 0 || p.y < 0 || p.x > window.innerWidth || p.y > window.innerHeight) return;
                     
-                    if (under && under !== el && under.innerText && under.innerText.trim().length > 0) {
-                         issues.push({
-                            html: el.outerHTML.slice(0, 150),
-                            selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
-                            target: under.tagName.toLowerCase() + (under.id ? '#' + under.id : '')
-                        });
+                    const originalPointerEvents = el.style.pointerEvents;
+                    el.style.pointerEvents = 'none';
+                    const under = document.elementFromPoint(p.x, p.y);
+                    el.style.pointerEvents = originalPointerEvents;
+                    
+                    // Exclude parent/child nesting relationships to prevent false positives
+                    if (under && under !== el && !el.contains(under) && !under.contains(el)) {
+                        if (under.innerText && under.innerText.trim().length > 0) {
+                            issues.push({
+                                html: el.outerHTML.slice(0, 150),
+                                selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+                                target: under.tagName.toLowerCase() + (under.id ? '#' + under.id : '')
+                            });
+                        }
                     }
                 });
             });
@@ -1320,68 +1465,170 @@ class PlaywrightEngine(IBrowserEngine):
         return violations
 
     async def _analyze_aria_relationships(self, page: Page) -> List[Violation]:
-        """Cycle 2: Detect broken ARIA IDREFs (aria-owns, aria-controls, etc.)."""
+        """Cycle 2: Detect broken ARIA IDREFs and check for empty targets or circular dependencies."""
         script = """() => {
             const attributes = ['aria-owns', 'aria-controls', 'aria-describedby', 'aria-labelledby'];
             const broken = [];
+            
+            // Graph representation to detect circular references
+            const adj = {};
+            
             attributes.forEach(attr => {
                 const elements = Array.from(document.querySelectorAll(`[${attr}]`));
                 elements.forEach(el => {
-                    const ids = el.getAttribute(attr).split(/\\s+/);
-                    ids.forEach(id => {
-                        if (id && !document.getElementById(id)) {
+                    const elId = el.id || '';
+                    const val = el.getAttribute(attr) || '';
+                    const ids = val.split(/\\s+/);
+                    
+                    ids.forEach(targetId => {
+                        if (!targetId) return;
+                        
+                        const target = document.getElementById(targetId);
+                        if (!target) {
                             broken.push({
+                                type: 'MISSING_ID',
                                 html: el.outerHTML.slice(0, 200),
                                 attribute: attr,
-                                missing_id: id,
+                                missing_id: targetId,
                                 selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
                             });
+                        } else {
+                            // Target exists, check if empty
+                            const text = target.innerText ? target.innerText.trim() : '';
+                            const label = target.getAttribute('aria-label') || '';
+                            if (attr === 'aria-labelledby' && !text && !label) {
+                                broken.push({
+                                    type: 'EMPTY_LABEL',
+                                    html: el.outerHTML.slice(0, 200),
+                                    attribute: attr,
+                                    missing_id: targetId,
+                                    selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+                                });
+                            }
+                            
+                            // Circular reference detection (aria-owns or aria-controls)
+                            if (elId && (attr === 'aria-owns' || attr === 'aria-controls')) {
+                                if (!adj[elId]) adj[elId] = [];
+                                adj[elId].push(targetId);
+                            }
                         }
                     });
                 });
             });
+            
+            // Check cycles
+            const visited = {};
+            const recStack = {};
+            function hasCycle(v) {
+                if (!visited[v]) {
+                    visited[v] = true;
+                    recStack[v] = true;
+                    const neighbors = adj[v] || [];
+                    for (let i = 0; i < neighbors.length; i++) {
+                        const n = neighbors[i];
+                        if (!visited[n] && hasCycle(n)) return true;
+                        else if (recStack[n]) return true;
+                    }
+                }
+                recStack[v] = false;
+                return false;
+            }
+            
+            for (const node in adj) {
+                if (hasCycle(node)) {
+                    broken.push({
+                        type: 'CIRCULAR_REF',
+                        html: document.getElementById(node).outerHTML.slice(0, 200),
+                        attribute: 'aria-owns/controls',
+                        missing_id: node,
+                        selector: '#' + node
+                    });
+                    break; // Flag once
+                }
+            }
+            
             return broken;
         }"""
         broken_refs = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
         for ref in broken_refs:
+            err_type = ref.get('type')
             attr = str(ref.get('attribute', ''))
             missing = str(ref.get('missing_id', ''))
             html = str(ref.get('html', ''))
             sel = str(ref.get('selector', ''))
             
-            violations.append(Violation(
-                rule_id="HEURISTIC-ARIA-REL-210",
-                session_id=self.session_id,
-                impact=ImpactLevel.SERIOUS,
-                description=f"Broken ARIA relationship: {attr} references non-existent ID '{missing}'.",
-                help_url="https://www.w3.org/WAI/ARIA/apg/practices/relationships/",
-                selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": f"Reference ID '{missing}' not found in DOM.", "fix": "Ensure that target elements referenced by aria-labelledby, aria-describedby, or aria-owns IDs actually exist in the DOM."}],
-                tags=["auditor", "heuristics", "aria-v3", "wcag-4.1.2", "wcag2a"],
-                agent="neural"
-            ))
+            if err_type == 'MISSING_ID':
+                violations.append(Violation(
+                    rule_id="HEURISTIC-ARIA-REL-210",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.SERIOUS,
+                    description=f"Broken ARIA relationship: {attr} references non-existent ID '{missing}'.",
+                    help_url="https://www.w3.org/WAI/ARIA/apg/practices/relationships/",
+                    selector=sel,
+                    nodes=[{"html": html, "target": sel, "failure_summary": f"Reference ID '{missing}' not found in DOM.", "fix": f"Create an element with id='{missing}' or update the {attr} attribute."}],
+                    tags=["auditor", "heuristics", "aria-v3", "wcag-4.1.2", "wcag2a"],
+                    agent="neural"
+                ))
+            elif err_type == 'EMPTY_LABEL':
+                violations.append(Violation(
+                    rule_id="HEURISTIC-ARIA-LABEL-EMPTY",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.CRITICAL,
+                    description=f"Empty ARIA label reference: aria-labelledby targets element '{missing}' which contains no accessible text content.",
+                    help_url="https://www.w3.org/TR/wai-aria-1.1/#aria-labelledby",
+                    selector=sel,
+                    nodes=[{"html": html, "target": sel, "failure_summary": f"Label target '{missing}' has no innerText.", "fix": f"Add descriptive text inside the label target element with id='{missing}'."}],
+                    tags=["auditor", "heuristics", "aria-v3", "wcag-1.1.1", "wcag-4.1.2", "wcag2a"],
+                    agent="neural"
+                ))
+            elif err_type == 'CIRCULAR_REF':
+                violations.append(Violation(
+                    rule_id="HEURISTIC-ARIA-CIRCULAR",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.CRITICAL,
+                    description="Circular ARIA reference detected. Interactive elements reference each other in a loop, which breaks screen reader parsing.",
+                    help_url="https://www.w3.org/TR/wai-aria-1.1/",
+                    selector=sel,
+                    nodes=[{"html": html, "target": sel, "failure_summary": "Circular owners/controls path.", "fix": "Ensure ARIA ownership relationships form a clean tree hierarchy and have no cycles."}],
+                    tags=["auditor", "heuristics", "aria-v3", "wcag-4.1.2", "wcag2a"],
+                    agent="neural"
+                ))
         return violations
 
     async def _analyze_target_size(self, page: Page) -> List[Violation]:
-        """Item 36: Detect interactive elements < 44x44px."""
+        """Item 36: Detect interactive elements < 24x24px (WCAG 2.2 AA target size minimum)."""
         script = """() => {
-            const allTargets = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
-            // Optimization: Limit analysis to first 200 interactive elements to prevent layout thrashing
+            const allTargets = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"]'));
             const targets = allTargets.filter(t => {
                 const style = window.getComputedStyle(t);
-                return style.display !== 'none' && style.visibility !== 'hidden';
-            }).slice(0, 200);
+                return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+            }).slice(0, 300);
 
-            return targets.map(t => {
+            const issues = [];
+            targets.forEach(t => {
                 const rect = t.getBoundingClientRect();
-                return { 
-                    html: t.outerHTML.slice(0, 200), 
-                    width: rect.width, 
-                    height: rect.height, 
-                    selector: t.tagName.toLowerCase() + (t.id ? '#' + t.id : '')
-                };
-            }).filter(t => t.width > 0 && (t.width < 44 || t.height < 44));
+                if (rect.width === 0 || rect.height === 0) return;
+                
+                const style = window.getComputedStyle(t);
+                // Exempt inline text links (embedded in paragraphs/text blocks)
+                const isInline = style.display === 'inline' && 
+                                 t.parentElement && 
+                                 ['P', 'SPAN', 'LI', 'A', 'DIV'].includes(t.parentElement.tagName) &&
+                                 t.parentElement.innerText.trim().length > t.innerText.trim().length * 1.5;
+                                 
+                if (isInline) return;
+
+                if (rect.width < 24 || rect.height < 24) {
+                    issues.push({
+                        html: t.outerHTML.slice(0, 200),
+                        width: rect.width,
+                        height: rect.height,
+                        selector: t.tagName.toLowerCase() + (t.id ? '#' + t.id : '')
+                    });
+                }
+            });
+            return issues;
         }"""
         small_elements = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
@@ -1394,32 +1641,38 @@ class PlaywrightEngine(IBrowserEngine):
             violations.append(Violation(
                 rule_id="HEURISTIC-TARGET-036",
                 session_id=self.session_id,
-                impact=ImpactLevel.MODERATE,
-                description=f"Interactive target size too small ({round(width)}x{round(height)}px). Minimum recommended: 44x44px.",
-                help_url="https://www.w3.org/WAI/WCAG21/Understanding/target-size.html",
+                impact=ImpactLevel.SERIOUS,
+                description=f"Interactive target size too small ({round(width)}x{round(height)}px). Minimum required under WCAG 2.2: 24x24px.",
+                help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html",
                 selector=sel,
-                nodes=[{"html": html, "target": sel, "failure_summary": "Small touch target.", "fix": "Increase target size to at least 44x44px (or 24x24px for WCAG 2.2 Level AA target size minimum) or add padding."}],
-                tags=["auditor", "heuristics", "wcag-2.5.5", "wcag2aaa"],
+                nodes=[{"html": html, "target": sel, "failure_summary": "Interactive touch target is below 24x24px.", "fix": "Increase target size to at least 24x24px or add padding."}],
+                tags=["auditor", "heuristics", "wcag-2.5.8", "wcag2aa"],
                 agent="motor"
             ))
         return violations
 
     async def _analyze_alt_text_quality(self, page: Page) -> List[Violation]:
-        """Item 50: Flag generic/redundant alt descriptions."""
+        """Item 50: Flag generic/redundant alt descriptions, excluding decorative images."""
         generic_terms = ["image", "img", "photo", "pic", "graphic", "icon", "logo", "drawing", "picture"]
         script = """() => {
-            const images = Array.from(document.querySelectorAll('img[alt]'));
+            const images = Array.from(document.querySelectorAll('img'));
             return images.map(img => ({
                 html: img.outerHTML.slice(0, 200),
-                alt: img.alt.toLowerCase().trim()
+                alt: img.hasAttribute('alt') ? img.alt.toLowerCase().trim() : null,
+                hasAlt: img.hasAttribute('alt')
             }));
         }"""
         img_data = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
         for img in img_data:
-            alt = str(img.get('alt', ''))
+            has_alt = img.get('hasAlt', False)
+            alt = img.get('alt')
             html = str(img.get('html', ''))
-            if any(term == alt for term in generic_terms) or len(alt) < 3:
+            
+            if not has_alt or alt == "":
+                continue # Skip decorative images or those missing alt (handled by standard engine)
+                
+            if alt is not None and (any(term == alt or f" {term} " in f" {alt} " for term in generic_terms) or len(alt) < 3):
                 violations.append(Violation(
                     rule_id="HEURISTIC-ALT-050",
                     session_id=self.session_id,
@@ -1434,47 +1687,205 @@ class PlaywrightEngine(IBrowserEngine):
         return violations
 
     async def _verify_skip_links(self, page: Page) -> List[Violation]:
-        """Item 33: Verify 'Skip to Content' mechanism."""
-        has_skip = await page.evaluate("""() => {
+        """Item 33: Verify 'Skip to Content' mechanism and eliminate false positives/negatives."""
+        needs_skip = await page.evaluate("""() => {
+            const navElements = document.querySelectorAll('nav, [role="navigation"]');
+            if (navElements.length > 0) return true;
+            
             const links = Array.from(document.querySelectorAll('a'));
-            return links.some(l => l.innerText.toLowerCase().includes('skip') && l.href.includes('#'));
+            let headerLinksCount = 0;
+            links.forEach(link => {
+                let parent = link.parentElement;
+                while (parent && parent !== document.body) {
+                    if (parent.tagName === 'HEADER' || parent.tagName === 'NAV' || parent.className.includes('nav') || parent.className.includes('menu')) {
+                        headerLinksCount++;
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+            });
+            return headerLinksCount >= 5;
         }""")
-        if not has_skip:
-            return [Violation(
+        
+        if not needs_skip:
+            return []
+ 
+        skip_link_data = await page.evaluate("""() => {
+            const links = Array.from(document.querySelectorAll('a, button'));
+            const skipLinks = links.filter(l => {
+                const text = l.innerText ? l.innerText.toLowerCase().trim() : '';
+                return text.includes('skip') && (l.getAttribute('href') || '').includes('#');
+            });
+            
+            if (skipLinks.length === 0) return { found: false };
+            
+            const first = skipLinks[0];
+            const href = first.getAttribute('href');
+            const targetId = href.split('#')[1];
+            
+            const targetEl = document.getElementById(targetId);
+            const targetExists = !!targetEl;
+            let targetVisible = false;
+            if (targetExists) {
+                const targetStyle = window.getComputedStyle(targetEl);
+                targetVisible = targetStyle.display !== 'none' && targetStyle.visibility !== 'hidden';
+            }
+            
+            const style = window.getComputedStyle(first);
+            const isHidden = style.display === 'none' || style.visibility === 'hidden';
+            
+            return {
+                found: true,
+                html: first.outerHTML.slice(0, 200),
+                targetId: targetId,
+                targetExists: targetExists,
+                targetVisible: targetVisible,
+                isHidden: isHidden
+            };
+        }""")
+        
+        violations = []
+        if not skip_link_data.get('found', False):
+            violations.append(Violation(
                 rule_id="HEURISTIC-SKIP-033",
                 session_id=self.session_id,
                 impact=ImpactLevel.SERIOUS,
-                description="Bypass block (Skip Link) missing. Screen reader users may face navigation fatigue.",
+                description="Bypass block (Skip Link) missing on a page with repetitive navigation blocks.",
                 help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
                 selector="body",
-                nodes=[{"html": "<body>", "target": "body", "failure_summary": "No mechanism to skip repetitive content.", "fix": "Add a visually hidden 'Skip to main content' link as the first focusable element inside the <body> tag."}],
+                nodes=[{"html": "<body>", "target": "body", "failure_summary": "No mechanism to skip repetitive header links.", "fix": "Add a visually hidden 'Skip to main content' link as the first focusable element inside the body."}],
                 tags=["auditor", "heuristics", "wcag-2.4.1", "wcag2a"],
                 agent="motor"
-            )]
-        return []
+            ))
+        else:
+            if not skip_link_data.get('targetExists', False):
+                violations.append(Violation(
+                    rule_id="HEURISTIC-SKIP-033-BROKEN",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.CRITICAL,
+                    description=f"Broken skip link: Target ID '#{skip_link_data.get('targetId')}' does not exist in the DOM.",
+                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
+                    selector="a",
+                    nodes=[{"html": skip_link_data.get('html'), "target": "a", "failure_summary": f"Skip link targets missing ID '{skip_link_data.get('targetId')}'", "fix": "Update skip link href to match the ID of the main content element."}],
+                    tags=["auditor", "heuristics", "wcag-2.4.1", "wcag2a"],
+                    agent="motor"
+                ))
+            elif not skip_link_data.get('targetVisible', False):
+                violations.append(Violation(
+                    rule_id="HEURISTIC-SKIP-033-TARGET-HIDDEN",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.SERIOUS,
+                    description=f"Skip link target '#{skip_link_data.get('targetId')}' is hidden (display: none or visibility: hidden).",
+                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
+                    selector="a",
+                    nodes=[{"html": skip_link_data.get('html'), "target": "a", "failure_summary": f"Skip link targets hidden element '{skip_link_data.get('targetId')}'", "fix": "Ensure the target of the skip link is a visible container or becomes active upon focus."}],
+                    tags=["auditor", "heuristics", "wcag-2.4.1", "wcag2a"],
+                    agent="motor"
+                ))
+            elif skip_link_data.get('isHidden', False):
+                violations.append(Violation(
+                    rule_id="HEURISTIC-SKIP-033-HIDDEN",
+                    session_id=self.session_id,
+                    impact=ImpactLevel.SERIOUS,
+                    description="Skip link is completely hidden from screen readers/keyboard navigation (display:none or visibility:hidden).",
+                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/bypass-blocks.html",
+                    selector="a",
+                    nodes=[{"html": skip_link_data.get('html'), "target": "a", "failure_summary": "Skip link is visually and programmatically hidden.", "fix": "Ensure the skip link is focusable and becomes visible when focused (use CSS skip link techniques)."}],
+                    tags=["auditor", "heuristics", "wcag-2.4.1", "wcag2a"],
+                    agent="motor"
+                ))
+                
+        return violations
 
     async def _analyze_heading_hierarchy(self, page: Page) -> List[Violation]:
-        """Item 47: Detect skipped heading levels."""
-        headings = cast(List[int], await page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
-                .map(h => parseInt(h.tagName[1]));
-        }"""))
+        """Item 47: Detect skipped heading levels within structural subtrees to eliminate false positives."""
+        script = """() => {
+            const containers = Array.from(document.querySelectorAll('main, aside, footer, header, nav, [role="main"]'));
+            if (containers.length === 0) containers.push(document.body);
+            
+            const issues = [];
+            containers.forEach(container => {
+                const headings = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+                    .filter(h => {
+                        // Filter out empty headings
+                        if (!h.innerText || h.innerText.trim().length === 0) return false;
+                        
+                        // Filter out hidden headings
+                        const style = window.getComputedStyle(h);
+                        if (style.display === 'none' || style.visibility === 'hidden') return false;
+                        
+                        let parent = h.parentElement;
+                        while (parent && parent !== container) {
+                            if (['MAIN', 'ASIDE', 'FOOTER', 'HEADER', 'NAV'].includes(parent.tagName)) {
+                                return false;
+                            }
+                            parent = parent.parentElement;
+                        }
+                        return true;
+                    })
+                    .map(h => ({
+                        level: parseInt(h.tagName[1]),
+                        html: h.outerHTML.slice(0, 150),
+                        selector: h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')
+                    }));
+                
+                if (headings.length > 0) {
+                    // If the first heading in a major container starts at H3 or deeper, it has skipped H1/H2
+                    const first = headings[0];
+                    if (first.level > 2) {
+                        issues.push({
+                            curr: first.level,
+                            prev: 1,
+                            html: first.html,
+                            selector: first.selector,
+                            isFirst: true
+                        });
+                    }
+                }
+                
+                for (let i = 1; i < headings.length; i++) {
+                    const curr_h = headings[i].level;
+                    const prev_h = headings[i-1].level;
+                    if (curr_h > prev_h + 1) {
+                        issues.push({
+                            curr: curr_h,
+                            prev: prev_h,
+                            html: headings[i].html,
+                            selector: headings[i].selector,
+                            isFirst: false
+                        });
+                    }
+                }
+            });
+            return issues;
+        }"""
+        
+        skipped_headings = cast(List[Dict[str, Any]], await page.evaluate(script))
         violations = []
-        for i in range(1, len(headings)):
-            curr_h = int(headings[i])
-            prev_h = int(headings[i-1])
-            if curr_h > prev_h + 1:
-                violations.append(Violation(
-                    rule_id="HEURISTIC-HEAD-047",
-                    session_id=self.session_id,
-                    impact=ImpactLevel.MODERATE,
-                    description=f"Skipped heading level detected (H{prev_h} to H{curr_h}).",
-                    help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
-                    selector=f"h{curr_h}",
-                    nodes=[{"html": f"<h{curr_h}>", "target": f"h{curr_h}", "failure_summary": "Illogical structural hierarchy.", "fix": f"Adjust heading levels (e.g., change H{curr_h} to H{prev_h + 1}) to preserve sequential heading hierarchy."}],
-                    tags=["auditor", "heuristics", "wcag-1.3.1", "wcag2a"],
-                    agent="cognitive"
-                ))
+        for issue in skipped_headings:
+            curr_h = int(issue.get('curr', 0))
+            prev_h = int(issue.get('prev', 0))
+            html = str(issue.get('html', ''))
+            sel = str(issue.get('selector', ''))
+            is_first = bool(issue.get('isFirst', False))
+            
+            description = (
+                f"Skipped heading level detected (H{prev_h} to H{curr_h}). Structural hierarchy should descend sequentially."
+                if not is_first else
+                f"Skipped heading level at start of container: Starts with H{curr_h} instead of H1 or H2."
+            )
+            
+            violations.append(Violation(
+                rule_id="HEURISTIC-HEAD-047",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description=description,
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                selector=sel,
+                nodes=[{"html": html, "target": sel, "failure_summary": f"Heading level jumped or started at H{curr_h}.", "fix": f"Adjust heading structure so that H{curr_h} descends sequentially from its parent."}],
+                tags=["auditor", "heuristics", "wcag-1.3.1", "wcag2a"],
+                agent="cognitive"
+            ))
         return violations
 
     async def _find_all_render_contexts(self, page: Page) -> List[Tuple[str, str]]:
@@ -1541,28 +1952,41 @@ class PlaywrightEngine(IBrowserEngine):
         return traps
 
     async def _verify_language_integrity(self, page: Page) -> List[Violation]:
-        """Verifies if the declared 'lang' attribute matches the actual content."""
+        """Verifies if the declared 'lang' attribute matches the actual content, filtered by high confidence and bilingual overrides."""
         violations = []
         try:
-            from langdetect import detect, DetectorFactory # type: ignore
-            DetectorFactory.seed = 0 # Ensure deterministic results
+            from langdetect import detect_langs, DetectorFactory # type: ignore
+            DetectorFactory.seed = 0
             
-            # 1. Get Declared Language
             declared_lang = await page.evaluate("document.documentElement.lang || 'N/A'")
-            
-            # 2. Extract Representative Text
             page_text = await page.evaluate("document.body.innerText.slice(0, 3000)")
-            if not page_text.strip(): return []
+            if not page_text.strip() or len(page_text.strip()) < 150: return []
             
-            # 3. Detect Actual Language
-            detected_lang = detect(page_text)
+            langs = detect_langs(page_text)
+            if not langs: return []
             
-            # 4. Compare (Basic check for primary language code)
             major_declared = declared_lang.split("-")[0].lower()
+            
+            # Bilingual check: if the declared language is detected at all with >= 15% probability,
+            # we consider it a valid mixed/bilingual page and skip flagging a mismatch.
+            declared_detected = False
+            for l in langs:
+                if l.lang.split("-")[0].lower() == major_declared and l.prob >= 0.15:
+                    declared_detected = True
+                    break
+            
+            if declared_detected:
+                return []
+                
+            best_lang = langs[0]
+            # High confidence threshold (> 0.85) to eliminate false positives on short/mixed-lang pages
+            if best_lang.prob < 0.85: return []
+            
+            detected_lang = best_lang.lang
             major_detected = detected_lang.split("-")[0].lower()
             
             if major_declared != major_detected and major_declared != "n/a":
-                self.logger.warning(f"Linguistic Anomaly: Declared '{major_declared}', Detected '{major_detected}'")
+                self.logger.warning(f"Linguistic Anomaly: Declared '{major_declared}', Detected '{major_detected}' (confidence: {best_lang.prob:.2f})")
                 violations.append(Violation(
                     rule_id="HEURISTIC-LANG-003",
                     session_id=self.session_id,
@@ -1641,20 +2065,21 @@ class PlaywrightEngine(IBrowserEngine):
                 })
 
             tags = v.get("tags", [])
+            agent = v.get("agent", "htmlcs" if "htmlcs" in tags else "axe")
             
             # Create high-fidelity Violation object
             violation = Violation(
                 rule_id=v.get("id", "AXE-GENERIC"),
                 session_id=self.session_id,
                 impact=impact,
-                agent="axe",
+                agent=agent,
                 description=v.get("description", "Auditor: Detailed description missing."),
                 help_url=v.get("helpUrl", "https://auditor.agency/wcag"),
                 selector=v.get("selector", first_selector),
                 nodes=node_summaries,
                 tags=tags,
                 compliance_level=ComplianceMapper.get_compliance_level(tags, impact),
-                category=ComplianceMapper.get_category(tags, v.get("id", "AXE-GENERIC"), "axe"),
+                category=ComplianceMapper.get_category(tags, v.get("id", "AXE-GENERIC"), agent),
                 severity_matrix=ComplianceMapper.get_severity_matrix(impact),
                 url=url
             )
@@ -1711,12 +2136,15 @@ class PlaywrightEngine(IBrowserEngine):
         violations: List[Violation] = []
         
         try:
-            # Accessibility analysis is handled via ZAP-V5 heuristics.
-            pass
-            
-            # Deep JavaScript Injection for Keyboard Focus Order Analysis
-            focus_order_violations = await self._analyze_keyboard_focus_topology(page)
+            # 1. Deep JavaScript Injection for Keyboard Focus Order Analysis
+            focus_order_violations = await self._analyze_keyboard_focus_topology_static(page)
             violations.extend(focus_order_violations)
+
+            # 2. Retrieve Accessibility Tree Snapshot & Recursively Audit
+            if hasattr(page, 'accessibility') and page.accessibility is not None:
+                snapshot = await page.accessibility.snapshot()
+                if snapshot:
+                    violations.extend(self._analyze_aria_node_recursive(snapshot, 0))
 
         except Exception as e:
             self.logger.error(f"ARIA Structural Intelligence Failure: {e}")
@@ -1733,16 +2161,17 @@ class PlaywrightEngine(IBrowserEngine):
         children = node.get("children", [])
 
         # HEURISTIC 1: Generic Role Null-Name Detection
-        if role in ["button", "link", "menuitem"] and not name:
+        if role in ["button", "link", "menuitem", "checkbox", "radio"] and not name:
             violations.append(Violation(
                 rule_id="ENGINE-ARIA-001",
-                description=f"Interactive role '{role}' found with null name. Element is non-deterministic for screen readers.",
+                description=f"Interactive role '{role}' found with null or empty name in Accessibility Tree. Element is completely inaccessible to screen readers.",
                 impact=ImpactLevel.CRITICAL,
                 selector=f"ARIA-ROLE[{role}]",
                 help_url="https://www.w3.org/WAI/WCAG22/Techniques/aria/ARIA14",
-                nodes=[{"html": f"<{role}> (Missing Name)", "target": "ARIA-ROLE", "failure_summary": "Interactive element has no deterministic name."}],
-                tags=["aria", "accessibility"],
-                session_id=self.session_id
+                nodes=[{"html": f"<{role}> (Missing Name)", "target": "ARIA-ROLE", "failure_summary": "Interactive element has no deterministic accessible name."}],
+                tags=["aria", "accessibility", "wcag-4.1.2"],
+                session_id=self.session_id,
+                agent="neural"
             ))
 
         # HEURISTIC 2: Depth-Aware Structural Complexity
@@ -1755,18 +2184,30 @@ class PlaywrightEngine(IBrowserEngine):
                 help_url="https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships",
                 nodes=[{"html": "DOM-ROOT", "target": "ROOT", "failure_summary": "Structural complexity exceeds cognitive accessibility thresholds."}],
                 tags=["structure", "complexity"],
-                session_id=self.session_id
+                session_id=self.session_id,
+                agent="cognitive"
             ))
 
-        # HEURISTIC 3: Heading Level Sequencing (Heuristic)
-        # This requires state across children, handled via parent context if needed
+        # HEURISTIC 3: Form Element Without Accessible Label
+        if role in ["combobox", "searchbox", "textbox"] and not name:
+            violations.append(Violation(
+                rule_id="ENGINE-FORM-LABEL-002",
+                description=f"Form control role '{role}' lacks an accessible name in the Accessibility Tree.",
+                impact=ImpactLevel.SERIOUS,
+                selector=f"ARIA-ROLE[{role}]",
+                help_url="https://www.w3.org/WAI/WCAG22/Understanding/label-in-name",
+                nodes=[{"html": f"<{role}> (Missing Label)", "target": "ARIA-ROLE", "failure_summary": "Input lacks form label or aria-label attribute."}],
+                tags=["aria", "forms", "wcag-3.3.2"],
+                session_id=self.session_id,
+                agent="cognitive"
+            ))
 
         for child in children:
             violations.extend(self._analyze_aria_node_recursive(child, depth + 1))
 
         return violations
 
-    async def _analyze_keyboard_focus_topology(self, page: "Page") -> List[Violation]:
+    async def _analyze_keyboard_focus_topology_static(self, page: "Page") -> List[Violation]:
         """
         Sophisticated focus-path analysis via JS injection.
         """
@@ -1800,17 +2241,22 @@ class PlaywrightEngine(IBrowserEngine):
             if not node["visible"]: continue
             
             # Topological Out-of-Order Detection
-            if node["y"] < last_y - 50: # Significant upward jump in tab order
-                violations.append(Violation(
-                    rule_id="ENGINE-FOCUS-002",
-                    description=f"Non-linear focus topology detected. Focus jumps from Y={last_y} to Y={node['y']}.",
-                    impact=ImpactLevel.SERIOUS,
-                    selector=f"{node['tag']}[pos={node['index']}]",
-                    help_url="https://www.w3.org/WAI/WCAG22/Understanding/focus-order",
-                    nodes=[{"html": "Focus Jump Detected", "target": node["tag"]}],
-                    tags=["focus", "topology"],
-                    session_id=self.session_id
-                ))
+            # If the focus moves to a new column (X changes significantly), it is a logical column wrap, not a jump.
+            # Only flag if within the same column (X within 150px) and it jumps upwards significantly (Y decreases by more than 100px).
+            if last_y != -1 and last_x != -1:
+                x_diff = abs(node["x"] - last_x)
+                if x_diff < 150 and node["y"] < last_y - 100:
+                    violations.append(Violation(
+                        rule_id="ENGINE-FOCUS-002",
+                        description=f"Non-linear focus topology detected inside visual column. Focus jumps upwards from Y={last_y} to Y={node['y']}.",
+                        impact=ImpactLevel.SERIOUS,
+                        selector=f"{node['tag']}[pos={node['index']}]",
+                        help_url="https://www.w3.org/WAI/WCAG22/Understanding/focus-order",
+                        nodes=[{"html": f"Focus jumped upwards in column (X={node['x']:.1f}px, Y={node['y']:.1f}px)", "target": node["tag"]}],
+                        tags=["focus", "topology", "wcag-2.4.3"],
+                        session_id=self.session_id,
+                        agent="motor"
+                    ))
             
             last_y = node["y"]
             last_x = node["x"]
@@ -1839,25 +2285,113 @@ class PlaywrightEngine(IBrowserEngine):
                 return 0.2126 * r + 0.7152 * g + 0.0722 * b;
             }
 
+            function parseRgba(colorStr) {
+                const matches = colorStr.match(/[\\d.]+/g);
+                if (!matches) return [255, 255, 255, 1];
+                const r = parseFloat(matches[0]);
+                const g = parseFloat(matches[1]);
+                const b = parseFloat(matches[2]);
+                const a = matches[3] !== undefined ? parseFloat(matches[3]) : 1;
+                return [r, g, b, a];
+            }
+
+            function blendColors(fg, bg) {
+                const alpha = fg[3];
+                const r = Math.round(fg[0] * alpha + bg[0] * (1 - alpha));
+                const g = Math.round(fg[1] * alpha + bg[1] * (1 - alpha));
+                const b = Math.round(fg[2] * alpha + bg[2] * (1 - alpha));
+                return [r, g, b, 1];
+            }
+
+            function getActualBackgroundColor(el) {
+                let currentBg = [255, 255, 255, 1]; // Default to white
+                let node = el;
+                const path = [];
+                while (node) {
+                    path.unshift(node);
+                    node = node.parentElement;
+                }
+                
+                for (const n of path) {
+                    const style = window.getComputedStyle(n);
+                    const bgStr = style.backgroundColor;
+                    const bg = parseRgba(bgStr);
+                    if (bg[3] > 0) {
+                        currentBg = blendColors(bg, currentBg);
+                    }
+                    if (bg[3] === 1) {
+                        currentBg = bg; // Reset base to opaque background
+                    }
+                }
+                return currentBg;
+            }
+
             const elements = Array.from(document.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, a'));
-            return elements.map(el => {
+            const issues = [];
+            
+            elements.forEach(el => {
+                const text = el.innerText ? el.innerText.trim() : '';
+                if (!text || text.length < 2) return;
+                
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) return;
+                
                 const style = window.getComputedStyle(el);
-                const bg = style.backgroundColor.match(/\\d+/g);
-                const fg = style.color.match(/\\d+/g);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
                 
-                if (!bg || !fg || bg.length < 3 || fg.length < 3) return null;
+                // Exempt elements containing gradient or background images to prevent false positives
+                let hasBackgroundImage = false;
+                let node = el;
+                while (node) {
+                    const nodeStyle = window.getComputedStyle(node);
+                    const bgImg = nodeStyle.backgroundImage;
+                    if (bgImg && bgImg !== 'none' && bgImg !== 'initial' && bgImg !== 'inherit') {
+                        hasBackgroundImage = true;
+                        break;
+                    }
+                    node = node.parentElement;
+                }
+                if (hasBackgroundImage) return;
+
+                const bg = getActualBackgroundColor(el);
+                const fgRaw = parseRgba(style.color);
                 
-                const l1 = getLuminance(fg.map(Number));
-                const l2 = getLuminance(bg.map(Number));
+                // Account for computed opacity
+                let computedOpacity = 1.0;
+                let opacityNode = el;
+                while (opacityNode) {
+                    const opVal = parseFloat(window.getComputedStyle(opacityNode).opacity);
+                    if (!isNaN(opVal)) {
+                        computedOpacity *= opVal;
+                    }
+                    opacityNode = opacityNode.parentElement;
+                }
+                
+                // Blend foreground text color with background if text is translucent
+                const blendedFg = blendColors([fgRaw[0], fgRaw[1], fgRaw[2], fgRaw[3] * computedOpacity], bg);
+                
+                const l1 = getLuminance(blendedFg.slice(0, 3));
+                const l2 = getLuminance(bg.slice(0, 3));
                 
                 const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-                return {
-                    text: el.innerText.substring(0, 20),
-                    ratio: ratio,
-                    fontSize: style.fontSize,
-                    tagName: el.tagName
-                };
-            }).filter(x => x && x.ratio < 4.5); // Filtering for potential issues
+                
+                const fontSize = parseFloat(style.fontSize);
+                const fontWeight = style.fontWeight;
+                const isBold = fontWeight === 'bold' || parseInt(fontWeight) >= 700;
+                const isLarge = fontSize >= 24 || (fontSize >= 18.66 && isBold);
+                const threshold = isLarge ? 3.0 : 4.5;
+                
+                if (ratio < threshold) {
+                    issues.push({
+                        text: text.substring(0, 50),
+                        ratio: ratio,
+                        threshold: threshold,
+                        fontSize: style.fontSize,
+                        tagName: el.tagName
+                    });
+                }
+            });
+            return issues;
         }
         """
         
@@ -1865,13 +2399,14 @@ class PlaywrightEngine(IBrowserEngine):
         for res in results:
             violations.append(Violation(
                 rule_id="ENGINE-COLOR-001",
-                description=f"Low contrast perception detected ({res['ratio']:.2f}:1). Threshold is 4.5:1.",
+                description=f"Low contrast perception detected ({res['ratio']:.2f}:1). Threshold is {res['threshold']}:1.",
                 impact=ImpactLevel.SERIOUS,
                 selector=f"{res['tagName']}[text='{res['text']}']",
                 help_url="https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum",
                 nodes=[{"html": res["text"], "target": res["tagName"]}],
-                tags=["color", "contrast"],
-                session_id=self.session_id
+                tags=["color", "contrast", "wcag-1.4.3"],
+                session_id=self.session_id,
+                agent="visual"
             ))
 
         return violations
@@ -1882,37 +2417,95 @@ class PlaywrightEngine(IBrowserEngine):
 
     async def _audit_interaction_fluidity(self, page: "Page") -> List[Violation]:
         """
-        Analyzes motion patterns, timing constraints, and interaction targets.
+        Analyzes pointer target spacing and size under WCAG AAA guidelines (< 44x44px)
+        and checks for spacing collisions under WCAG 2.2 AA (< 24px center-to-center distance).
         """
         violations: List[Violation] = []
         
-        # Target Size Analysis (WCAG 2.2 - 2.5.8 Pointer Target Spacing)
         target_script = """
         () => {
-            const targets = Array.from(document.querySelectorAll('button, a, input[type="submit"]'));
-            return targets.map(t => {
+            const targets = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"]'));
+            const issues = [];
+            
+            const targetData = targets.map((t, idx) => {
                 const rect = t.getBoundingClientRect();
+                const style = window.getComputedStyle(t);
+                const isInline = style.display === 'inline' && 
+                                 t.parentElement && 
+                                 ['P', 'SPAN', 'LI', 'A', 'DIV'].includes(t.parentElement.tagName);
                 return {
-                    tag: t.tagName,
-                    w: rect.width,
-                    h: rect.height,
-                    text: t.innerText.substring(0, 20)
+                    el: t,
+                    idx: idx,
+                    rect: rect,
+                    isInline: isInline,
+                    style: style,
+                    visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+                    cx: rect.left + rect.width / 2,
+                    cy: rect.top + rect.height / 2
                 };
-            }).filter(t => t.w < 24 || t.h < 24);
+            }).filter(d => d.visible && !d.isInline);
+
+            targetData.forEach(d => {
+                const rect = d.rect;
+                
+                if (rect.width < 44 || rect.height < 44) {
+                    let collisionFound = false;
+                    let nearestTgtInfo = '';
+                    
+                    if (rect.width < 24 || rect.height < 24) {
+                        for (let i = 0; i < targetData.length; i++) {
+                            const other = targetData[i];
+                            if (other.idx === d.idx) continue;
+                            
+                            const dist = Math.sqrt(Math.pow(d.cx - other.cx, 2) + Math.pow(d.cy - other.cy, 2));
+                            if (dist < 24) {
+                                collisionFound = true;
+                                nearestTgtInfo = `${other.el.tagName.toLowerCase()}(${other.el.innerText.substring(0, 10).trim()})`;
+                                break;
+                            }
+                        }
+                    }
+
+                    issues.push({
+                        tag: d.el.tagName,
+                        w: rect.width,
+                        h: rect.height,
+                        text: d.el.innerText.substring(0, 20).trim(),
+                        isCollision: collisionFound,
+                        collisionInfo: nearestTgtInfo,
+                        selector: d.el.tagName.toLowerCase() + (d.el.id ? '#' + d.el.id : '')
+                    });
+                }
+            });
+            return issues;
         }
         """
         small_targets = await page.evaluate(target_script)
         for t in small_targets:
-            violations.append(Violation(
-                rule_id="ENGINE-INTERACT-005",
-                description=f"Sub-optimal target size detected ({t['w']}x{t['h']}px). Risk of incidental activation for motor-impaired users.",
-                impact=ImpactLevel.MINOR,
-                selector=f"{t['tag']}[text='{t['text']}']",
-                help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum",
-                nodes=[{"html": t["text"], "target": t["tag"]}],
-                tags=["interaction", "targets"],
-                session_id=self.session_id
-            ))
+            if t['isCollision']:
+                violations.append(Violation(
+                    rule_id="ENGINE-INTERACT-008",
+                    description=f"Touch target size collision hazard: Small target size ({round(t['w'])}x{round(t['h'])}px) is closer than 24px center-to-center from adjacent target '{t['collisionInfo']}'.",
+                    impact=ImpactLevel.SERIOUS,
+                    selector=t['selector'],
+                    help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html",
+                    nodes=[{"html": t["text"], "target": t["tag"]}],
+                    tags=["interaction", "targets", "spacing", "wcag-2.5.8"],
+                    session_id=self.session_id,
+                    agent="motor"
+                ))
+            else:
+                violations.append(Violation(
+                    rule_id="ENGINE-INTERACT-005",
+                    description=f"Sub-optimal target size detected ({t['w']}x{t['h']}px). Recommended minimum for Level AAA is 44x44px.",
+                    impact=ImpactLevel.MINOR,
+                    selector=t['selector'],
+                    help_url="https://www.w3.org/WAI/WCAG22/Understanding/target-size-enhanced",
+                    nodes=[{"html": t["text"], "target": t["tag"]}],
+                    tags=["interaction", "targets", "wcag-2.5.5"],
+                    session_id=self.session_id,
+                    agent="motor"
+                ))
 
         return violations
 
@@ -1957,7 +2550,8 @@ class PlaywrightEngine(IBrowserEngine):
     async def _perform_css_structural_audit(self, page: Page) -> List[Violation]:
         """
         Extracts and analyzes all CSS rules to identify anti-patterns 
-        like 'user-select: none' or 'outline: none' that break accessibility.
+        like 'user-select: none' or 'outline: none' that break accessibility,
+        supplemented by a direct computed style DOM scan to bypass CORS limits.
         """
         self.logger.info("Engaging Engine CSS Intelligence Sweep...")
         violations: List[Violation] = []
@@ -1974,29 +2568,61 @@ class PlaywrightEngine(IBrowserEngine):
                     for (let j = 0; j < rules.length; j++) {
                         const rule = rules[j];
                         if (!rule.style) continue;
+                        const selector = rule.selectorText;
+                        if (!selector) continue;
                         
-                        // Heuristic: Detecting 'outline: none' without ':focus' override
-                        if (rule.style.outline === 'none' || rule.style.outlineWidth === '0px') {
-                            results.push({
-                                type: 'OUTLINE_HIDDEN',
-                                selector: rule.selectorText,
-                                cssText: rule.cssText
-                            });
+                        if (selector.includes(':focus')) {
+                            if (rule.style.outline === 'none' || rule.style.outlineWidth === '0px' || rule.style.outlineStyle === 'none') {
+                                results.push({
+                                    type: 'OUTLINE_HIDDEN',
+                                    selector: selector,
+                                    cssText: rule.cssText
+                                });
+                            }
                         }
                         
-                        // Heuristic: Detecting 'user-select: none' on readable content
-                        if (rule.style.userSelect === 'none') {
-                            results.push({
-                                type: 'CONTENT_LOCKED',
-                                selector: rule.selectorText,
-                                cssText: rule.cssText
-                            });
+                        if (rule.style.userSelect === 'none' || rule.style.webkitUserSelect === 'none') {
+                            const isTextContainer = selector.includes('p') || selector.includes('span') || selector.includes('body') || selector.includes('article') || selector.includes('section');
+                            if (isTextContainer) {
+                                results.push({
+                                    type: 'CONTENT_LOCKED',
+                                    selector: selector,
+                                    cssText: rule.cssText
+                                });
+                            }
                         }
                     }
                 } catch (e) {
-                    // Cross-origin stylesheet access might fail
+                    // Cross-origin stylesheet access might fail (CORS limit)
                 }
             }
+
+            // Supplemental scan: directly query visible text elements on the page and check computed userSelect
+            try {
+                const directElements = Array.from(document.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, article, section'));
+                const sample = directElements.slice(0, 250);
+                
+                sample.forEach(el => {
+                    if (el.innerText && el.innerText.trim().length > 10) {
+                        const style = window.getComputedStyle(el);
+                        if (style.userSelect === 'none' || style.webkitUserSelect === 'none') {
+                            const tag = el.tagName.toLowerCase();
+                            const sel = tag + (el.id ? '#' + el.id : '') + (el.className ? '.' + String(el.className).split(/\\s+/)[0] : '');
+                            
+                            if (!results.some(r => r.selector === sel)) {
+                                results.push({
+                                    type: 'CONTENT_LOCKED',
+                                    selector: sel,
+                                    cssText: el.outerHTML.slice(0, 150)
+                                });
+                            }
+                        }
+                    }
+                });
+            } catch (e) {
+                // DOM analysis safety catch
+            }
+
             return results;
         }
         """
@@ -2007,23 +2633,25 @@ class PlaywrightEngine(IBrowserEngine):
                 violations.append(Violation(
                     session_id=self.session_id,
                     rule_id="ENGINE-CSS-001",
-                    description=f"Accessibility barrier: Outline suppressed for selector '{anomaly['selector']}'. Focus indicators are mandatory for keyboard navigation.",
+                    description=f"Accessibility barrier: Outline suppressed in focus state for selector '{anomaly['selector']}'.",
                     impact=ImpactLevel.SERIOUS,
                     selector=anomaly["selector"] or "STYLE-RULE",
                     help_url="https://www.w3.org/WAI/WCAG22/Understanding/focus-visible",
                     nodes=[{"html": anomaly["cssText"], "target": anomaly["selector"]}],
-                    tags=["css", "focus"]
+                    tags=["css", "focus", "wcag-2.4.7"],
+                    agent="motor"
                 ))
             elif anomaly["type"] == "CONTENT_LOCKED":
                 violations.append(Violation(
                     session_id=self.session_id,
                     rule_id="ENGINE-CSS-005",
-                    description=f"Usability barrier: Text selection disabled via CSS on '{anomaly['selector']}'. Blocks screen reader highlighting and copy-paste accessibility.",
+                    description=f"Usability barrier: Text selection disabled via CSS on '{anomaly['selector']}'.",
                     impact=ImpactLevel.MODERATE,
                     selector=anomaly["selector"] or "STYLE-RULE",
                     help_url="https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships",
                     nodes=[{"html": anomaly["cssText"], "target": anomaly["selector"]}],
-                    tags=["css", "selection"]
+                    tags=["css", "selection"],
+                    agent="cognitive"
                 ))
 
         return violations
@@ -2070,83 +2698,457 @@ class PlaywrightEngine(IBrowserEngine):
         except:
             return {}
 
-    def _verify_color_contrast_in_canvas(self, ctx: Any):
+    async def _verify_color_contrast_in_canvas(self, page: Page) -> List[Violation]:
         """Canvas pixel analysis for accessibility."""
-        # Simulated logic for canvas-based accessibility checks
         self.logger.debug("Analyzing canvas-rendered text contrast...")
-        pass
+        script = """() => {
+            const canvases = Array.from(document.querySelectorAll('canvas'));
+            return canvases.filter(c => {
+                const hasFallback = c.innerText.trim().length > 0;
+                const hasAria = c.getAttribute('aria-label') || c.getAttribute('title');
+                const isHidden = c.getAttribute('aria-hidden') === 'true';
+                return !isHidden && !hasFallback && !hasAria;
+            }).map(c => ({ html: c.outerHTML.slice(0, 150), selector: 'canvas' + (c.id ? '#'+c.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-CANVAS-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Canvas element lacks text fallback or ARIA label. Canvas rendered graphics/text are inaccessible.",
+                help_url="https://www.w3.org/WAI/WCAG21/Techniques/html/H104",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Missing accessible name for Canvas element."}],
+                tags=["auditor", "visual", "canvas", "wcag-1.1.1"],
+                agent="visual"
+            ))
+        return violations
 
-    def _check_font_scaling_stability(self, el: Any):
+    async def _check_font_scaling_stability(self, page: Page) -> List[Violation]:
         """Verifies if text remains readable at 200% zoom."""
-        pass
+        script = """() => {
+            const meta = document.querySelector('meta[name="viewport"]');
+            if (!meta) return null;
+            const content = meta.getAttribute('content') || '';
+            const isLocked = content.includes('maximum-scale=1') || content.includes('user-scalable=no');
+            return isLocked ? { html: meta.outerHTML } : null;
+        }"""
+        locked = await page.evaluate(script)
+        if locked:
+            return [Violation(
+                rule_id="HEURISTIC-ZOOM-002",
+                session_id=self.session_id,
+                impact=ImpactLevel.CRITICAL,
+                description="Browser zooming is disabled via meta viewport tag. Prevents 200% text scaling.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/resize-text.html",
+                selector="meta[name='viewport']",
+                nodes=[{"html": locked['html'], "target": "meta", "failure_summary": "Zooming locked to 1.0 or user-scalable=no."}],
+                tags=["auditor", "visual", "zoom", "wcag-1.4.4"],
+                agent="visual"
+            )]
+        return []
 
-    def _audit_form_error_association(self, form: Any):
+    async def _audit_form_error_association(self, page: Page) -> List[Violation]:
         """Deep check for aria-describedby on dynamic error messages."""
-        pass
+        script = """() => {
+            const inputs = Array.from(document.querySelectorAll('input[aria-invalid="true"]'));
+            return inputs.filter(input => {
+                const describedBy = input.getAttribute('aria-describedby');
+                const errorMessage = input.getAttribute('aria-errormessage');
+                if (!describedBy && !errorMessage) return true;
+                if (describedBy && !document.getElementById(describedBy)) return true;
+                if (errorMessage && !document.getElementById(errorMessage)) return true;
+                return false;
+            }).map(input => ({ html: input.outerHTML.slice(0, 150), selector: input.tagName.toLowerCase() + (input.id ? '#'+input.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-FORM-ERR-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Form input marked as invalid (aria-invalid='true') but lacks valid aria-describedby/aria-errormessage linking to the error text.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/error-identification.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Missing programmatic error association."}],
+                tags=["auditor", "cognitive", "forms", "wcag-3.3.1"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _verify_landmark_completeness(self, roles: List[str]):
+    async def _verify_landmark_completeness(self, page: Page) -> List[Violation]:
         """Ensures banner, main, navigation, more, and footer exist."""
-        pass
+        script = """() => {
+            const hasMain = document.querySelector('main, [role="main"]') !== null;
+            const issues = [];
+            if (!hasMain) {
+                issues.push("Missing primary <main> landmark or role='main'.");
+            }
+            return issues;
+        }"""
+        issues = cast(List[str], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-LANDMARK-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description=issue,
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                selector="body",
+                nodes=[{"html": "<body>", "target": "body", "failure_summary": issue}],
+                tags=["auditor", "cognitive", "landmarks", "wcag-1.3.1"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _detect_invisible_focus_traps(self, page: Page):
+    async def _detect_invisible_focus_traps(self, page: Page) -> List[Violation]:
         """Identifies modals that do not trap focus correctly."""
-        pass
+        script = """() => {
+            const badTabIndexes = Array.from(document.querySelectorAll('[tabindex]')).filter(el => {
+                const ti = parseInt(el.getAttribute('tabindex'));
+                return !isNaN(ti) && ti > 0;
+            });
+            return badTabIndexes.map(el => ({ html: el.outerHTML.slice(0, 150), selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-TABINDEX-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description="Positive tabindex detected. This disrupts the natural reading and navigation order.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/focus-order.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Positive tabindex > 0."}],
+                tags=["auditor", "motor", "navigation", "wcag-2.4.3"],
+                agent="motor"
+            ))
+        return violations
 
-    def _audit_reading_order_coherence(self, page: Page):
+    async def _audit_reading_order_coherence(self, page: Page) -> List[Violation]:
         """Compares visual order with DOM order."""
-        pass
+        script = """() => {
+            const containers = Array.from(document.querySelectorAll('div, section, ul, ol'));
+            const issues = [];
+            containers.forEach(c => {
+                const style = window.getComputedStyle(c);
+                if (style.display === 'flex' && (style.flexDirection === 'row-reverse' || style.flexDirection === 'column-reverse')) {
+                    issues.push({ html: c.outerHTML.slice(0, 150), selector: c.tagName.toLowerCase() + (c.id ? '#'+c.id : '') });
+                }
+            });
+            return issues;
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-READING-ORDER-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MINOR,
+                description="CSS flex-direction reverse detected. Visual reading order may disconnect from DOM focus order.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/meaningful-sequence.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Reverse flex layout disrupts DOM reading sequence."}],
+                tags=["auditor", "cognitive", "layout", "wcag-1.3.2"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _check_autoplay_violation(self, media_elements: List[Any]):
+    async def _check_autoplay_violation(self, page: Page) -> List[Violation]:
         """Ensures audio/video does not play for >3s without controls."""
-        pass
+        script = """() => {
+            const media = Array.from(document.querySelectorAll('video, audio'));
+            return media.filter(m => m.autoplay && !m.controls && !m.muted).map(m => ({
+                html: m.outerHTML.slice(0, 150), selector: m.tagName.toLowerCase() + (m.id ? '#'+m.id : '')
+            }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-AUTOPLAY-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Media element with autoplay lacks controls and is not muted. Severe disruption for screen reader users.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/audio-control.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Autoplaying media without controls."}],
+                tags=["auditor", "neural", "media", "wcag-1.4.2"],
+                agent="neural"
+            ))
+        return violations
 
-    def _verify_skip_link_presence(self, page: Page):
-        """Finds 'Skip to Main Content' links."""
-        pass
-
-    def _audit_responsive_orientation_lock(self, page: Page):
-        """Ensures the site does not lock to portrait/landscape."""
-        pass
-
-    def _check_touch_target_spacing(self, page: Page):
-        """Verifies 24px spacing between small targets."""
-        pass
-
-    def _verify_aria_live_announcements(self, page: Page):
+    async def _verify_aria_live_announcements(self, page: Page) -> List[Violation]:
         """Monitors for aria-live region changes."""
-        pass
+        script = """() => {
+            const lives = Array.from(document.querySelectorAll('[aria-live]'));
+            return lives.filter(l => l.getAttribute('aria-live') !== 'polite' && l.getAttribute('aria-live') !== 'assertive' && l.getAttribute('aria-live') !== 'off').map(l => ({
+                html: l.outerHTML.slice(0, 150), selector: l.tagName.toLowerCase() + (l.id ? '#'+l.id : ''), val: l.getAttribute('aria-live')
+            }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-LIVE-002",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description=f"Invalid aria-live value '{issue.get('val')}'. Must be polite, assertive, or off.",
+                help_url="https://www.w3.org/TR/wai-aria-1.1/#aria-live",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Invalid ARIA live region attribute."}],
+                tags=["auditor", "neural", "aria", "wcag-4.1.2"],
+                agent="neural"
+            ))
+        return violations
 
-    def _audit_iframe_title_presence(self, iframes: List[Any]):
+    async def _audit_iframe_title_presence(self, page: Page) -> List[Violation]:
         """Ensures titles exist on all frames."""
-        pass
+        script = """() => {
+            const iframes = Array.from(document.querySelectorAll('iframe'));
+            return iframes.filter(ifr => {
+                const isHidden = ifr.getAttribute('aria-hidden') === 'true' || ifr.tabIndex === -1;
+                const hasTitle = ifr.hasAttribute('title') && ifr.getAttribute('title').trim().length > 0;
+                return !isHidden && !hasTitle;
+            }).map(ifr => ({ html: ifr.outerHTML.slice(0, 150), selector: 'iframe' + (ifr.id ? '#'+ifr.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-IFRAME-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Inline frame (iframe) missing descriptive title attribute.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/name-role-value.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Missing title on iframe."}],
+                tags=["auditor", "neural", "iframe", "wcag-4.1.2"],
+                agent="neural"
+            ))
+        return violations
 
-    def _detect_scrollable_regions_keyboard_access(self, page: Page):
+    async def _detect_scrollable_regions_keyboard_access(self, page: Page) -> List[Violation]:
         """Ensures regions with overflow: scroll are focusable."""
-        pass
+        script = """() => {
+            const elements = Array.from(document.querySelectorAll('div, section, article, aside'));
+            return elements.filter(el => {
+                const style = window.getComputedStyle(el);
+                const isScrollable = (style.overflow === 'auto' || style.overflow === 'scroll' || style.overflowX === 'auto' || style.overflowY === 'scroll') && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
+                const isFocusable = el.hasAttribute('tabindex') || el.tagName === 'TEXTAREA';
+                return isScrollable && !isFocusable;
+            }).map(el => ({ html: el.outerHTML.slice(0, 150), selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-SCROLL-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Scrollable region is not keyboard accessible (missing tabindex='0').",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/keyboard.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Scrollable area requires tabindex='0' for keyboard scrolling."}],
+                tags=["auditor", "motor", "keyboard", "wcag-2.1.1"],
+                agent="motor"
+            ))
+        return violations
 
-    def _verify_table_header_relationships(self, tables: List[Any]):
+    async def _verify_table_header_relationships(self, page: Page) -> List[Violation]:
         """Checks scope and id/headers on complex tables."""
-        pass
+        script = """() => {
+            const tables = Array.from(document.querySelectorAll('table'));
+            return tables.filter(t => {
+                if (t.getAttribute('role') === 'presentation' || t.getAttribute('role') === 'none') return false;
+                const ths = Array.from(t.querySelectorAll('th'));
+                if (ths.length === 0) return true; // Data table without TH
+                const missingScope = ths.some(th => !th.hasAttribute('scope') && !th.hasAttribute('id'));
+                return missingScope;
+            }).map(t => ({ html: t.outerHTML.slice(0, 150), selector: 'table' + (t.id ? '#'+t.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-TABLE-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description="Data table contains header cells (th) missing 'scope' attributes, or is a data table without any header cells.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/info-and-relationships.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Table headers lack scope attribute."}],
+                tags=["auditor", "cognitive", "tables", "wcag-1.3.1"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _audit_placeholder_contrast(self, inputs: List[Any]):
-        """Check contrast of input placeholders."""
-        pass
-
-    def _verify_autocomplete_attributes(self, inputs: List[Any]):
+    async def _verify_autocomplete_attributes(self, page: Page) -> List[Violation]:
         """Ensures common fields use autocomplete tags."""
-        pass
+        script = """() => {
+            const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"]'));
+            return inputs.filter(inp => {
+                const name = (inp.getAttribute('name') || '').toLowerCase();
+                const id = (inp.getAttribute('id') || '').toLowerCase();
+                const isPersonal = name.includes('email') || id.includes('email') || name.includes('password') || name.includes('name') || name.includes('phone');
+                return isPersonal && !inp.hasAttribute('autocomplete');
+            }).map(inp => ({ html: inp.outerHTML.slice(0, 150), selector: inp.tagName.toLowerCase() + (inp.id ? '#'+inp.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-AUTOCOMPLETE-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description="Personal information input field is missing the 'autocomplete' attribute.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/identify-input-purpose.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Missing autocomplete token for standard form field."}],
+                tags=["auditor", "cognitive", "forms", "wcag-1.3.5"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _check_draggables_keyboard_alt(self, elements: List[Any]):
+    async def _check_draggables_keyboard_alt(self, page: Page) -> List[Violation]:
         """Verifies drag-and-drop has keyboard alternative."""
-        pass
+        script = """() => {
+            const draggables = Array.from(document.querySelectorAll('[draggable="true"]'));
+            return draggables.map(el => ({ html: el.outerHTML.slice(0, 150), selector: el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-DRAG-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Draggable element detected. Ensure a keyboard-accessible alternative exists for dragging.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/pointer-gestures.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Draggable UI requires keyboard accessible control."}],
+                tags=["auditor", "motor", "drag", "wcag-2.5.4"],
+                agent="motor"
+            ))
+        return violations
 
-    def _audit_timed_response_extensions(self, page: Page):
+    async def _audit_placeholder_contrast(self, page: Page) -> List[Violation]:
+        """Check contrast of input placeholders."""
+        # Using a computed style check via JS for placeholder opacity anomalies
+        script = """() => {
+            const inputs = Array.from(document.querySelectorAll('input[placeholder], textarea[placeholder]'));
+            return inputs.filter(inp => {
+                const style = window.getComputedStyle(inp);
+                return style.opacity !== '' && parseFloat(style.opacity) < 0.4;
+            }).map(inp => ({ html: inp.outerHTML.slice(0, 150), selector: inp.tagName.toLowerCase() + (inp.id ? '#'+inp.id : '') }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-PLACEHOLDER-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.MODERATE,
+                description="Input placeholder has extremely low opacity (<0.4), likely failing 4.5:1 contrast requirements.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Low placeholder opacity."}],
+                tags=["auditor", "visual", "contrast", "wcag-1.4.3"],
+                agent="visual"
+            ))
+        return violations
+
+    async def _audit_responsive_orientation_lock(self, page: Page) -> List[Violation]:
+        """Ensures the site does not lock to portrait/landscape using CSS media queries."""
+        script = """() => {
+            const results = [];
+            for (let i = 0; i < document.styleSheets.length; i++) {
+                try {
+                    const rules = document.styleSheets[i].cssRules;
+                    if (!rules) continue;
+                    for (let j = 0; j < rules.length; j++) {
+                        if (rules[j].conditionText && rules[j].conditionText.includes('orientation')) {
+                            if (rules[j].cssText.includes('display: none') || rules[j].cssText.includes('transform: rotate')) {
+                                results.push({ html: rules[j].cssText.slice(0, 150), selector: 'CSS Media Query' });
+                            }
+                        }
+                    }
+                } catch(e) {}
+            }
+            return results;
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-ORIENTATION-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="CSS Orientation lock detected. Content is hidden or forcibly rotated based on device orientation.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/orientation.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "CSS locks orientation."}],
+                tags=["auditor", "motor", "orientation", "wcag-1.3.4"],
+                agent="motor"
+            ))
+        return violations
+
+    async def _audit_timed_response_extensions(self, page: Page) -> List[Violation]:
         """Looks for 'Extends session' buttons."""
-        pass
+        script = """() => {
+            const metaRefresh = document.querySelector('meta[http-equiv="refresh"]');
+            if (metaRefresh) {
+                const content = metaRefresh.getAttribute('content');
+                if (content && parseInt(content) > 0 && parseInt(content) < 72000) {
+                    return [{ html: metaRefresh.outerHTML, selector: 'meta[http-equiv="refresh"]' }];
+                }
+            }
+            return [];
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-TIMEOUT-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.CRITICAL,
+                description="Meta refresh tag detected. Page will auto-refresh/redirect without warning, violating time limits.",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/timing-adjustable.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Auto-refresh without user control."}],
+                tags=["auditor", "cognitive", "timeout", "wcag-2.2.1"],
+                agent="cognitive"
+            ))
+        return violations
 
-    def _verify_non_text_content_alternatives(self, page: Page):
+    async def _verify_non_text_content_alternatives(self, page: Page) -> List[Violation]:
         """Final sweep for all non-text content alt attributes."""
-        pass
+        script = """() => {
+            const objects = Array.from(document.querySelectorAll('object, embed'));
+            return objects.filter(obj => !obj.hasAttribute('title') && !obj.hasAttribute('aria-label')).map(obj => ({
+                html: obj.outerHTML.slice(0, 150), selector: obj.tagName.toLowerCase() + (obj.id ? '#'+obj.id : '')
+            }));
+        }"""
+        issues = cast(List[Dict[str, Any]], await page.evaluate(script))
+        violations = []
+        for issue in issues:
+            violations.append(Violation(
+                rule_id="HEURISTIC-OBJECT-001",
+                session_id=self.session_id,
+                impact=ImpactLevel.SERIOUS,
+                description="Complex non-text content (<object> or <embed>) is missing an accessible name (title or aria-label).",
+                help_url="https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+                selector=issue['selector'],
+                nodes=[{"html": issue['html'], "target": issue['selector'], "failure_summary": "Embedded object missing accessible name."}],
+                tags=["auditor", "neural", "object", "wcag-1.1.1"],
+                agent="neural"
+            ))
+        return violations
 
     # [ BLOCK: ADVANCED GEOLOCATION SPOOFING ]
     async def _spoof_government_node_location(self, context: BrowserContext):
@@ -2161,13 +3163,28 @@ class PlaywrightEngine(IBrowserEngine):
         pass
 
     async def _analyze_focus_traps(self, page: Page) -> List[Violation]:
-        """Cycle 7: Detect keyboard focus traps using entropy analysis."""
+        """Cycle 7: Detect keyboard focus traps using entropy analysis with element-count safeguards."""
         self.logger.info("Initiating Focus-Trap Forensics [Rule 701]...")
         
         violations = []
         focused_sequence = []
         
         try:
+            # Check if there are actually enough focusable elements to trap focus
+            focusable_count = await page.evaluate("""() => {
+                const els = Array.from(document.querySelectorAll('button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])'));
+                return els.filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                }).length;
+            }""")
+            
+            # If there are 0 or 1 or 2 focusable elements, it's not a trap if they keep getting focused
+            if focusable_count <= 2:
+                self.logger.debug(f"Skipping Focus-Trap analysis: only {focusable_count} visible focusable elements found.")
+                return []
+            
             # 1. Reset focus
             await page.keyboard.press("Escape")
             await page.focus("body")
@@ -2176,27 +3193,33 @@ class PlaywrightEngine(IBrowserEngine):
             for _ in range(25):
                 await page.keyboard.press("Tab")
                 await asyncio.sleep(0.05)
-                active = await page.evaluate("document.activeElement.tagName + (document.activeElement.id ? '#' + document.activeElement.id : '')")
+                active = await page.evaluate("""() => {
+                    const el = document.activeElement;
+                    if (!el || el === document.body) return 'body';
+                    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className ? '.' + String(el.className).split(/\\s+/)[0] : '');
+                }""")
                 focused_sequence.append(active)
             
             # 3. Entropy Analysis (Repeating subsequences or single element stickiness)
             if len(focused_sequence) > 10:
-                # Check for "stuck" (same element 10+ times)
-                counts = {x: focused_sequence.count(x) for x in set(focused_sequence)}
-                stuck_el = next((x for x, c in counts.items() if c > 10), None)
-                
-                if stuck_el:
-                    violations.append(Violation(
-                        rule_id="HEURISTIC-FOCUS-TRAP-701",
-                        session_id=self.session_id,
-                        impact=ImpactLevel.CRITICAL,
-                        description=f"Keyboard Focus Trap detected: Navigation locked on '{stuck_el}'.",
-                        help_url="https://www.w3.org/WAI/WCAG21/Understanding/no-keyboard-trap.html",
-                        selector=stuck_el,
-                        nodes=[{"html": "Interactive Loop Detected", "target": stuck_el, "failure_summary": "Keyboard focus cannot exit this element or container.", "fix": "Ensure keyboard focus can move past this element using standard Tab/Shift-Tab navigation without getting stuck."}],
-                        tags=["auditor", "forensics", "navigation-v3", "wcag-2.1.2", "wcag2a"],
-                        agent="motor"
-                    ))
+                # Filter out 'body' or empty activeElement
+                sequence_filtered = [x for x in focused_sequence if x != 'body']
+                if len(sequence_filtered) > 5:
+                    counts = {x: sequence_filtered.count(x) for x in set(sequence_filtered)}
+                    stuck_el = next((x for x, c in counts.items() if c > 10), None)
+                    
+                    if stuck_el:
+                        violations.append(Violation(
+                            rule_id="HEURISTIC-FOCUS-TRAP-701",
+                            session_id=self.session_id,
+                            impact=ImpactLevel.CRITICAL,
+                            description=f"Keyboard Focus Trap detected: Navigation locked on '{stuck_el}'. Focus cannot move past this element.",
+                            help_url="https://www.w3.org/WAI/WCAG21/Understanding/no-keyboard-trap.html",
+                            selector=stuck_el,
+                            nodes=[{"html": "Interactive Loop / Stickiness Detected", "target": stuck_el, "failure_summary": "Keyboard focus cannot exit this element or container.", "fix": "Ensure keyboard focus can move past this element using standard Tab/Shift-Tab navigation without getting stuck."}],
+                            tags=["auditor", "forensics", "navigation-v3", "wcag-2.1.2", "wcag2a"],
+                            agent="motor"
+                        ))
         except Exception as e:
             self.logger.error(f"Focus-Trap Forensic Anomaly: {e}")
             

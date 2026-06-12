@@ -14,6 +14,8 @@ interface ViolationDetail {
   selector: string;
   current_fragment: string;
   suggested_fix: string;
+  confidence_score?: number;
+  verification_status?: string;
 }
 
 export default function IssueDetail() {
@@ -61,6 +63,24 @@ export default function IssueDetail() {
                     <span className="text-5xl font-heading font-bold text-on-surface">{data.occurrences}</span>
                     <span className="text-xs uppercase tracking-widest text-on-surface-variant mt-2 font-bold">Occurrences</span>
                  </div>
+                 {data.confidence_score !== undefined && data.confidence_score !== null && (
+                   <>
+                     <div className="h-16 w-px bg-surface-border"></div>
+                     <div className="flex flex-col">
+                        <span className="text-3xl font-heading font-mono font-bold text-primary">{(data.confidence_score * 100).toFixed(1)}%</span>
+                        <span className="text-xs uppercase tracking-widest text-on-surface-variant mt-2 font-bold">AI Confidence</span>
+                     </div>
+                   </>
+                 )}
+                 {data.verification_status && data.verification_status !== 'unverified' && (
+                   <>
+                     <div className="h-16 w-px bg-surface-border"></div>
+                     <div className="flex flex-col">
+                        <span className={`text-xl font-heading font-bold uppercase ${data.verification_status === 'true_positive' ? 'text-[#38a169]' : 'text-error line-through'}`}>{data.verification_status.replace('_', ' ')}</span>
+                        <span className="text-xs uppercase tracking-widest text-on-surface-variant mt-2 font-bold">Ground Truth</span>
+                     </div>
+                   </>
+                 )}
               </div>
             </div>
 

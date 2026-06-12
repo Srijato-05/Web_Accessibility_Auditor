@@ -58,13 +58,14 @@ class PageData:
 # EXTRACTION SCRIPTS (JavaScript executed in the browser context)
 # --------------------------------------------------------------------------
 
-EXTRACT_LINKS_JS = """() => {
+EXTRACT_LINKS_JS = r"""() => {
     const links = Array.from(document.querySelectorAll('a'));
     return links.slice(0, 2000).map(el => {
         const style = window.getComputedStyle(el);
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
         const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || el.hasAttribute('hidden') || (rect.width === 0 && rect.height === 0)) return null;
         return {
             tag: el.tagName.toLowerCase(),
             html: el.outerHTML.slice(0, 300),
@@ -72,7 +73,7 @@ EXTRACT_LINKS_JS = """() => {
             selector: el.tagName.toLowerCase()
                 + (el.id ? '#' + el.id : '')
                 + (el.className && typeof el.className === 'string'
-                   ? '.' + el.className.trim().split(/\\s+/).join('.') : ''),
+                   ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
             computedStyles: {
                 color: style.color,
                 backgroundColor: style.backgroundColor,
@@ -100,10 +101,10 @@ EXTRACT_LINKS_JS = """() => {
                 fontWeight: parentStyle.fontWeight || ''
             }
         };
-    });
+    }).filter(Boolean);
 }"""
 
-EXTRACT_TEXT_ELEMENTS_JS = """() => {
+EXTRACT_TEXT_ELEMENTS_JS = r"""() => {
     const elements = Array.from(document.querySelectorAll(
         'p, span, li, td, th, label, strong, em, mark, ins, del, div, section, article, h1, h2, h3, h4, h5, h6, .text-danger, .text-success, .text-warning, .error, .success, .warning, [class*="status"], [class*="alert"]'
     ));
@@ -112,6 +113,7 @@ EXTRACT_TEXT_ELEMENTS_JS = """() => {
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
         const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || el.hasAttribute('hidden') || (rect.width === 0 && rect.height === 0)) return null;
         return {
             tag: el.tagName.toLowerCase(),
             html: el.outerHTML.slice(0, 300),
@@ -119,7 +121,7 @@ EXTRACT_TEXT_ELEMENTS_JS = """() => {
             selector: el.tagName.toLowerCase()
                 + (el.id ? '#' + el.id : '')
                 + (el.className && typeof el.className === 'string'
-                   ? '.' + el.className.trim().split(/\\s+/).join('.') : ''),
+                   ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
             computedStyles: {
                 color: style.color,
                 backgroundColor: style.backgroundColor,
@@ -145,10 +147,10 @@ EXTRACT_TEXT_ELEMENTS_JS = """() => {
                 fontWeight: parentStyle.fontWeight || ''
             }
         };
-    });
+    }).filter(Boolean);
 }"""
 
-EXTRACT_FORM_ELEMENTS_JS = """() => {
+EXTRACT_FORM_ELEMENTS_JS = r"""() => {
     const elements = Array.from(document.querySelectorAll(
         'input, select, textarea, [role="textbox"], [role="combobox"], [role="listbox"]'
     ));
@@ -157,6 +159,8 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
         const parent = el.parentElement;
         const parentStyle = parent ? window.getComputedStyle(parent) : {};
         const rect = el.getBoundingClientRect();
+
+        if (style.display === 'none' || style.visibility === 'hidden' || el.hasAttribute('hidden') || (rect.width === 0 && rect.height === 0)) return null;
 
         // Check for nearby error/success text
         const siblingText = Array.from(parent ? parent.children : [])
@@ -203,14 +207,16 @@ EXTRACT_FORM_ELEMENTS_JS = """() => {
                 backgroundColor: parentStyle.backgroundColor || ''
             }
         };
-    });
+    }).filter(Boolean);
 }"""
 
-EXTRACT_IMAGES_JS = """() => {
+EXTRACT_IMAGES_JS = r"""() => {
     const images = Array.from(document.querySelectorAll('img, svg, canvas, [role="img"]'));
     return images.slice(0, 1000).map(el => {
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
+
+        if (style.display === 'none' || style.visibility === 'hidden' || el.hasAttribute('hidden') || (rect.width === 0 && rect.height === 0)) return null;
 
         // Check for figcaption
         const figure = el.closest('figure');
@@ -223,7 +229,7 @@ EXTRACT_IMAGES_JS = """() => {
             selector: el.tagName.toLowerCase()
                 + (el.id ? '#' + el.id : '')
                 + (el.className && typeof el.className === 'string'
-                   ? '.' + el.className.trim().split(/\\s+/).join('.') : ''),
+                   ? '.' + el.className.trim().split(/\s+/).join('.') : ''),
             computedStyles: {
                 display: style.display,
                 width: style.width,
@@ -241,7 +247,7 @@ EXTRACT_IMAGES_JS = """() => {
             boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
             parentStyles: {}
         };
-    });
+    }).filter(Boolean);
 }"""
 
 

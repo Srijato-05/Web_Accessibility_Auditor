@@ -19,6 +19,8 @@ interface AuditDetail {
     target?: string;
     agent?: string;
     category?: string;
+    confidence_score?: number;
+    verification_status?: string;
     nodes?: {
       html: string;
       target: string;
@@ -301,6 +303,14 @@ export default function Insights() {
                       {v.impact}
                     </span>
                     <span className="font-mono text-xs text-on-surface-variant">Occurrences: <strong className="text-on-surface">{v.occurrences}</strong></span>
+                    {v.confidence_score !== undefined && v.confidence_score !== null && (
+                        <span className="font-mono text-xs text-on-surface-variant bg-surface-container-high px-2 py-0.5 rounded border border-surface-border">Conf: <strong className="text-on-surface">{(v.confidence_score * 100).toFixed(1)}%</strong></span>
+                    )}
+                    {v.verification_status && v.verification_status !== 'unverified' && (
+                        <span className={`text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full border ${v.verification_status === 'true_positive' ? 'bg-[#38a169]/15 text-[#38a169] border-[#38a169]/30' : 'bg-error/15 text-error border-error/30 line-through'}`}>
+                            {v.verification_status.replace('_', ' ')}
+                        </span>
+                    )}
                   </div>
                   <h3 className="font-heading font-bold text-sm text-on-surface group-hover:text-primary transition-colors">{v.rule_id}</h3>
                   <p className="text-xs text-on-surface-variant max-w-3xl leading-relaxed">{v.description}</p>

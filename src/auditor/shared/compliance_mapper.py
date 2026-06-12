@@ -42,7 +42,7 @@ class ComplianceMapper:
         "Perceivable": ["color", "contrast", "alt", "text", "sensory", "visual", "image", "heading", "title", "media", "audio", "video"],
         "Operable": ["keyboard", "tab", "focus", "target", "nav", "motor", "pointer", "size", "link", "bypass", "skip", "scroll"],
         "Understandable": ["label", "form", "predict", "cognitive", "lang", "input", "error", "valid"],
-        "Robust": ["aria", "parsing", "neural", "role", "value", "id", "duplicate"]
+        "Robust": ["aria", "parsing", "neural", "role", "value", "duplicate-id", "duplicate"]
     }
 
     # Axe category tag groupings
@@ -59,7 +59,9 @@ class ComplianceMapper:
         "visual": "Perceivable",
         "motor": "Operable",
         "cognitive": "Understandable",
-        "neural": "Robust"
+        "neural": "Robust",
+        "axe": "Perceivable",
+        "htmlcs": "Perceivable"
     }
 
     # Severity Matrix descriptions
@@ -151,6 +153,16 @@ class ComplianceMapper:
         rule_id_lower = str(rule_id).lower()
         agent_lower = str(agent).lower()
 
+        # 0. Direct Principle Mapping (e.g. HTMLCS standards)
+        if "principle1" in rule_id_lower:
+            return "Perceivable"
+        elif "principle2" in rule_id_lower:
+            return "Operable"
+        elif "principle3" in rule_id_lower:
+            return "Understandable"
+        elif "principle4" in rule_id_lower:
+            return "Robust"
+
         # 1. Custom heuristic rules check (highest specificity)
         for pattern, principle in cls.HEURISTIC_RULES.items():
             if pattern in rule_id_lower:
@@ -193,7 +205,7 @@ class ComplianceMapper:
         if agent_lower in cls.AGENT_CATEGORIES:
             return cls.AGENT_CATEGORIES[agent_lower]
             
-        return "General Accessibility"
+        return "Perceivable"
 
 
     @classmethod
