@@ -677,8 +677,8 @@ async def update_settings(settings: SettingsUpdate):
 async def get_profile():
     settings_data = get_persisted_settings()
     return {
-        "name": "Sentinel Admin",
-        "email": "admin@sentinel.local",
+        "name": "A11yAudit Admin",
+        "email": "admin@a11yaudit.local",
         "role": "Auditor",
         "settings": settings_data
     }

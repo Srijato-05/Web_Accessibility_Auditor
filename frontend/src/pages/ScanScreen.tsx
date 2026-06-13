@@ -24,7 +24,7 @@ export default function ScanScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const simulationLogs = [
-    "Establishing connection with Sentinel analyzer node...",
+    "Establishing connection with A11yAudit analyzer node...",
     "Emulating target agent: Default Desktop Chrome",
     "Applying environment parameters: Resolution 1920x1080, Network: LAN",
     "Sending crawlers to origin root route...",

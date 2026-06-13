@@ -21,8 +21,8 @@ export default function Sidebar() {
           <Activity className="text-primary" size={16} />
         </div>
         <div>
-          <span className="font-heading font-bold text-sm tracking-wider block text-on-surface">Sentinel</span>
-          <span className="text-[9px] uppercase tracking-widest text-primary font-mono font-bold">A11yAudit</span>
+          <span className="font-heading font-bold text-base tracking-wider block text-on-surface">A11yAudit</span>
+          <span className="text-[9px] uppercase tracking-widest text-primary font-mono font-bold">Accessibility Auditor</span>
         </div>
       </div>
 

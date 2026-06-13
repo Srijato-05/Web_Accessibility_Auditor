@@ -24,7 +24,7 @@ export default function Help() {
   ];
 
   const faqs = [
-    { q: 'How does Sentinel audit compliance?', a: 'Sentinel checks your pages using both standard automated rules (Axe-Core) and dynamic heuristics run by active Chrome browsers (e.g. keyboard trapping, accessibility tags completeness) to compile diagnostic reports.' },
+    { q: 'How does A11yAudit audit compliance?', a: 'A11yAudit checks your pages using both standard automated rules (Axe-Core) and dynamic heuristics run by active Chrome browsers (e.g. keyboard trapping, accessibility tags completeness) to compile diagnostic reports.' },
     { q: 'What is Deep Audit Mode?', a: 'Standard scans execute rapid parsing check heuristics. Deep Audit runs a thorough DOM traversal checking visual alignments, dynamic contrast changes, and interactive form structures.' },
     { q: 'How do I export CSV reports?', a: 'Head to Settings (Profile) page, and select "Export Complete Organization Logs" to download your complete audit logs in CSV format.' }
   ];
@@ -123,7 +123,7 @@ export default function Help() {
           <div className="glass-panel p-5 flex items-start gap-3 bg-surface-highlight/20 border-none">
             <AlertCircle size={18} className="text-on-surface-variant shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-[10px] text-on-surface-variant leading-normal">
-              Sentinel is currently operating under public preview tier. Contact local infrastructure team for active credential allocations.
+              A11yAudit is currently operating under public preview tier. Contact local infrastructure team for active credential allocations.
             </p>
           </div>
         </div>

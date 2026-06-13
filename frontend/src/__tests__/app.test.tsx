@@ -19,8 +19,8 @@ describe('App Component', () => {
     expect(screen.getByText('Skip to main content')).toBeInTheDocument();
     
     // Sidebar should be loaded
-    expect(screen.getByText('Sentinel')).toBeInTheDocument();
     expect(screen.getByText('A11yAudit')).toBeInTheDocument();
+    expect(screen.getByText('Accessibility Auditor')).toBeInTheDocument();
 
     // Default route element ScanScreen should be loaded
     expect(screen.getByText('Target Initializer')).toBeInTheDocument();

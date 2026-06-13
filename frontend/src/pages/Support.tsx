@@ -42,7 +42,7 @@ export default function Support() {
          <div className="glass-panel p-12 text-center bg-surface-container-low shadow-ambient border-secondary/30 flex flex-col items-center justify-center">
             <CheckCircle size={64} className="text-secondary mb-6 drop-shadow-[0_0_8px_rgba(50,250,150,0.5)]" />
             <h2 className="text-2xl font-heading mb-4 text-on-surface">Ticket Dispatched Successfully</h2>
-            <p className="text-on-surface-variant max-w-lg mb-8 text-xs">Your intelligence payload has been securely routed to the Sentinel diagnostics team. A resolution expert will be in touch shortly.</p>
+            <p className="text-on-surface-variant max-w-lg mb-8 text-xs">Your intelligence payload has been securely routed to the A11yAudit diagnostics team. A resolution expert will be in touch shortly.</p>
             <button onClick={() => navigate('/profile')} className="secondary-btn border-secondary/50 text-secondary hover:bg-secondary hover:text-background transition-colors">
                Return to Profile
             </button>

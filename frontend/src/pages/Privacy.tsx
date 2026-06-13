@@ -31,7 +31,7 @@ export default function Privacy() {
          <section className="glass-panel p-8 bg-surface-container-lowest shadow-ambient border-outline-variant/20">
             <h2 className="text-xl font-heading mb-4 flex items-center gap-2 text-secondary"><Database size={20} /> Privacy Policy</h2>
             <div className="space-y-4 text-on-surface-variant leading-relaxed text-xs">
-               <p><strong>Information Collection:</strong> The Sentinel framework captures strictly necessary telemetry limited to target domain topologies, user layout paths, and programmatic violations.</p>
+               <p><strong>Information Collection:</strong> The A11yAudit framework captures strictly necessary telemetry limited to target domain topologies, user layout paths, and programmatic violations.</p>
                <p><strong>Third-Party Disclosures:</strong> Telemetry arrays remain absolutely confidential. No structural layout intelligence logic is dispatched to external vendor infrastructures. Artificial intelligence resolutions operate over local or strictly sandboxed secure enclaves exclusively.</p>
                <p><strong>User Consent & Purge Protocols:</strong> As an institutional administrator, you retain explicit operational override of the `LocalStorage` and `SessionStorage` caching hooks governing the token engine endpoints.</p>
             </div>

@@ -26,8 +26,8 @@ describe('Sidebar Component', () => {
   it('renders all menu items and highlights the active one', () => {
     render(<Sidebar />);
 
-    expect(screen.getByText('Sentinel')).toBeInTheDocument();
     expect(screen.getByText('A11yAudit')).toBeInTheDocument();
+    expect(screen.getByText('Accessibility Auditor')).toBeInTheDocument();
 
     // Check link render
     const scanLink = screen.getByText('Scan Console');
