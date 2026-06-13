@@ -22,7 +22,7 @@ export default function Sidebar() {
         </div>
         <div>
           <span className="font-heading font-bold text-sm tracking-wider block text-on-surface">Sentinel</span>
-          <span className="text-[9px] uppercase tracking-widest text-primary font-mono font-bold">A11y Auditor</span>
+          <span className="text-[9px] uppercase tracking-widest text-primary font-mono font-bold">A11yAudit</span>
         </div>
       </div>
 

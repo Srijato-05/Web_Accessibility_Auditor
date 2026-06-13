@@ -27,7 +27,7 @@ describe('Sidebar Component', () => {
     render(<Sidebar />);
 
     expect(screen.getByText('Sentinel')).toBeInTheDocument();
-    expect(screen.getByText('A11y Auditor')).toBeInTheDocument();
+    expect(screen.getByText('A11yAudit')).toBeInTheDocument();
 
     // Check link render
     const scanLink = screen.getByText('Scan Console');

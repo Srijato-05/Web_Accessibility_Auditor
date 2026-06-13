@@ -60,7 +60,7 @@ def setup_auditor_logging(level=logging.INFO):
     os.makedirs("reports/logs", exist_ok=True)
     os.makedirs("reports/data", exist_ok=True)
     os.makedirs("reports/forensics/har", exist_ok=True)
-    fh = logging.FileHandler("reports/logs/auditor.log")
+    fh = logging.FileHandler("reports/logs/auditor.log", encoding="utf-8")
     fh.setFormatter(AuditorJSONFormatter())
     logger.addHandler(fh)
 

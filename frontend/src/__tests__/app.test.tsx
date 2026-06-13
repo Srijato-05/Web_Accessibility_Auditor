@@ -20,7 +20,7 @@ describe('App Component', () => {
     
     // Sidebar should be loaded
     expect(screen.getByText('Sentinel')).toBeInTheDocument();
-    expect(screen.getByText('A11y Auditor')).toBeInTheDocument();
+    expect(screen.getByText('A11yAudit')).toBeInTheDocument();
 
     // Default route element ScanScreen should be loaded
     expect(screen.getByText('Target Initializer')).toBeInTheDocument();

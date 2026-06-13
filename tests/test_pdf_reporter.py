@@ -29,7 +29,7 @@ def test_generate_html_from_json():
     
     html = generate_html_from_json(data)
     
-    assert "Accessibility Audit Report" in html
+    assert "Accessibility Report" in html
     assert "https://test.com" in html
     assert "Alt missing" in html
     assert "AXE" in html
@@ -65,7 +65,7 @@ def test_generate_html_from_json():
         ]
     }
     html_fallback = generate_html_from_json(data_fallback)
-    assert "Accessibility Audit Report" in html_fallback
+    assert "Accessibility Report" in html_fallback
 
 @patch("auditor.infrastructure.pdf_reporter.sync_playwright")
 def test_convert_json_to_pdf(mock_sync_playwright):
@@ -149,7 +149,7 @@ def test_generate_html_extra_branches():
     }
     
     html = generate_html_from_json(data)
-    assert "Accessibility Audit Report" in html
+    assert "Accessibility Report" in html
     assert "Below A" in html
     assert "Increase contrast color value" in html
     assert "Add escape key action" in html
@@ -169,7 +169,7 @@ def test_generate_html_extra_branches():
         }
     }
     html_matrix = generate_html_from_json(data_with_matrix)
-    assert "Accessibility Audit Report" in html_matrix
+    assert "Accessibility Report" in html_matrix
 
 @patch("auditor.infrastructure.pdf_reporter.sync_playwright")
 def test_convert_json_to_pdf_exception(mock_sync_playwright):

@@ -37,7 +37,7 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                 by_agent[agent] = by_agent.get(agent, 0) + 1
     
     # Optimize rendering performance for massive datasets
-    render_as_table = len(findings) > 300
+    render_as_table = True
     is_truncated = False
 
     # Matrix Support
@@ -49,21 +49,7 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
     for a in agents_list:
         full_matrix[a] = {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0, "General": 0}
         
-    if matrix:
-        for a, categories in matrix.items():
-            a_lower = str(a).lower()
-            if a_lower in full_matrix:
-                for cat, val in categories.items():
-                    from auditor.shared.compliance_mapper import ComplianceMapper
-                    principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
-                    cat_lower = str(cat).lower()
-                    norm_cat = "General"
-                    for p in principles:
-                        if p.lower() in cat_lower:
-                            norm_cat = p
-                            break
-                    full_matrix[a_lower][norm_cat] += val
-    else:
+    if full_findings:
         from auditor.shared.compliance_mapper import ComplianceMapper
         principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
         for f in full_findings:
@@ -77,15 +63,38 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                         norm_cat = p
                         break
                 
+                if norm_cat == "General":
+                    tags = f.get("tags") or []
+                    rule_id = f.get("rule_id") or f.get("violation") or ""
+                    re_cat = ComplianceMapper.get_category(tags, rule_id, agent)
+                    for p in principles:
+                        if p.lower() in re_cat.lower():
+                            norm_cat = p
+                            break
+                
                 if agent in full_matrix:
                     full_matrix[agent][norm_cat] += 1
+    elif matrix:
+        for a, categories in matrix.items():
+            a_lower = str(a).lower()
+            if a_lower in full_matrix:
+                for cat, val in categories.items():
+                    from auditor.shared.compliance_mapper import ComplianceMapper
+                    principles = list(ComplianceMapper.WCAG_PRINCIPLES.values())
+                    cat_lower = str(cat).lower()
+                    norm_cat = "General"
+                    for p in principles:
+                        if p.lower() in cat_lower:
+                            norm_cat = p
+                            break
+                    full_matrix[a_lower][norm_cat] += val
 
     html = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>Clinical Accessibility Report</title>
+        <title>A11yAudit Accessibility Report</title>
         <style>
             body {{
                 font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -170,33 +179,85 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
             .val-low {{ color: #3b82f6; font-weight: 700; }}
             .val-zero {{ color: #cbd5e1; font-weight: 400; }}
 
-            /* Findings List */
-            .finding {{
-                background: white;
+            .findings-table-container {{
                 border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 24px;
-                margin-bottom: 24px;
-                page-break-inside: avoid;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-                position: relative;
+                border-radius: 8px;
                 overflow: hidden;
+                margin-top: 10px;
+                margin-bottom: 30px;
+                background: #ffffff;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
             }}
-            .finding::before {{
-                content: '';
-                position: absolute;
-                top: 0; left: 0; bottom: 0; width: 6px;
+            .findings-table {{
+                width: 100%;
+                border-collapse: collapse;
             }}
-            .finding.axe::before {{ background: #64748b; }}
-            .finding.htmlcs::before {{ background: #d97706; }}
-            .finding.visual::before {{ background: #3b82f6; }}
-            .finding.motor::before {{ background: #10b981; }}
-            .finding.cognitive::before {{ background: #8b5cf6; }}
-            .finding.neural::before {{ background: #ef4444; }}
-            
-            .finding-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }}
-            .finding-title {{ margin: 0; font-size: 1.25em; font-weight: 700; color: #1e293b; max-width: 70%; }}
-            .finding-tags {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }}
+            .findings-table th {{
+                background: #f1f5f9;
+                color: #334155;
+                font-weight: 700;
+                text-transform: uppercase;
+                font-size: 0.75em;
+                letter-spacing: 0.05em;
+                padding: 12px 16px;
+                border-bottom: 2px solid #cbd5e1;
+                text-align: left;
+            }}
+            .findings-table td {{
+                padding: 14px 16px;
+                vertical-align: top;
+                border-bottom: 1px solid #e2e8f0;
+                font-size: 0.88em;
+                line-height: 1.5;
+                color: #334155;
+            }}
+            .findings-table tr:nth-child(even) {{
+                background: #f8fafc;
+            }}
+            .findings-table tr:last-child td {{
+                border-bottom: none;
+            }}
+            .findings-table tr {{
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
+            .findings-table .anomaly-title {{
+                font-weight: 700;
+                color: #0f172a;
+                font-size: 0.95em;
+            }}
+            .findings-table .anomaly-guideline {{
+                color: #64748b;
+                font-size: 0.8em;
+                font-weight: 600;
+                margin-top: 4px;
+                display: block;
+            }}
+            .findings-table .fix-guide {{
+                background: #f0fdf4;
+                border: 1px solid #bbf7d0;
+                color: #166534;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 0.85em;
+                margin-top: 6px;
+                display: inline-block;
+                width: 95%;
+            }}
+            .findings-table .dom-code {{
+                font-family: Consolas, "Liberation Mono", Courier, monospace;
+                font-size: 0.82em;
+                background: #f8fafc;
+                color: #334155;
+                padding: 6px 10px;
+                border-radius: 4px;
+                border: 1px solid #cbd5e1;
+                word-wrap: break-word;
+                white-space: pre-wrap;
+                display: block;
+                max-width: 100%;
+                overflow-x: auto;
+            }}
             
             .badge {{
                 padding: 4px 10px;
@@ -205,6 +266,7 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                 font-weight: 700;
                 text-transform: uppercase;
                 letter-spacing: 0.05em;
+                display: inline-block;
             }}
             .badge.axe {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
             .badge.htmlcs {{ background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }}
@@ -213,41 +275,6 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
             .badge.cognitive {{ background: #ede9fe; color: #6d28d9; }}
             .badge.neural {{ background: #fee2e2; color: #b91c1c; }}
             .badge.guideline {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }}
-            
-            .conf-bar-container {{ width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; }}
-            .conf-bar {{ height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius: 3px; }}
-            .conf-text {{ font-size: 0.8em; font-weight: 700; color: #64748b; margin-top: 4px; display: block; }}
-            
-            .row {{ margin-bottom: 12px; display: flex; }}
-            .label {{ font-weight: 700; color: #64748b; width: 100px; flex-shrink: 0; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }}
-            .value {{ color: #334155; font-size: 0.95em; }}
-            .url-source {{ font-family: Consolas, "Liberation Mono", Courier, monospace; font-size: 0.8em; color: #94a3b8; margin-bottom: 20px; }}
-            
-            .code-block {{
-                background: #1e293b;
-                color: #e2e8f0;
-                border-radius: 8px;
-                padding: 16px;
-                font-family: Consolas, "Liberation Mono", Courier, monospace;
-                font-size: 0.85em;
-                word-wrap: break-word;
-                white-space: pre-wrap;
-                margin-top: 8px;
-                box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
-            }}
-            
-            .fix-block {{
-                background: #f0fdf4;
-                border: 1px solid #bbf7d0;
-                padding: 16px;
-                border-radius: 8px;
-                margin-top: 20px;
-                display: flex;
-                gap: 12px;
-            }}
-            .fix-icon {{ font-size: 1.5em; }}
-            .fix-content {{ font-size: 0.95em; color: #166534; }}
-            .fix-title {{ font-weight: 700; margin-bottom: 4px; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.05em; }}
         </style>
     </head>
     """
@@ -262,7 +289,7 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
         <body>
             <div class="container">
                 <div class="header-banner">
-                    <h1>Clinical Accessibility Report</h1>
+                    <h1>A11yAudit Accessibility Report</h1>
                     <div class="meta-info">
                         <p><strong>Target:</strong> {target_url}</p>
                         <p><strong>Session ID:</strong> {session_id}</p>
@@ -302,7 +329,7 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                     </div>
                 </div>
 
-                <h2>Clinical Diagnostic Matrix</h2>
+                <h2>Diagnostic Matrix</h2>
                 <div class="matrix-container">
                     <table class="matrix-table">
                         <thead>
@@ -317,7 +344,14 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                         <tbody>
                             {''.join([f'''
                             <tr>
-                                <td class="matrix-label">{agent}</td>
+                                <td class="matrix-label">{
+                                    'Standard (Axe)' if agent=='axe' else 
+                                    'Standard (HTMLCS)' if agent=='htmlcs' else 
+                                    'Visual AI' if agent=='visual' else 
+                                    'Motor Physics' if agent=='motor' else 
+                                    'Cognitive NLP' if agent=='cognitive' else 
+                                    'Neural Kinetic'
+                                }</td>
                                 <td class="{('val-high' if full_matrix[agent].get('Perceivable',0) > 10 else 'val-med' if full_matrix[agent].get('Perceivable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Perceivable', 0)}</td>
                                 <td class="{('val-high' if full_matrix[agent].get('Operable',0) > 10 else 'val-med' if full_matrix[agent].get('Operable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Operable', 0)}</td>
                                 <td class="{('val-high' if full_matrix[agent].get('Understandable',0) > 10 else 'val-med' if full_matrix[agent].get('Understandable',0) > 0 else 'val-zero')}">{full_matrix[agent].get('Understandable', 0)}</td>
@@ -364,48 +398,19 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
         """
         
         if render_as_table:
-            chunk_size = 100
-            for i in range(0, len(agent_list), chunk_size):
-                chunk = agent_list[i:i+chunk_size]
-                html += f"""
-                <table class="matrix-table" style="text-align: left; margin-bottom: 20px; font-size: 0.85em; width: 100%; border: 1px solid #e2e8f0; page-break-inside: auto;">
-                    <thead>
-                        <tr>
-                            <th style="width: 25%; text-align: left;">Rule / Anomaly</th>
-                            <th style="width: 10%; text-align: left;">Impact</th>
-                            <th style="width: 40%; text-align: left;">Diagnosis & Remediation</th>
-                            <th style="width: 25%; text-align: left;">DOM Signature</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                """
-                for finding in chunk:
-                    violation_val = finding.get("violation") or finding.get("rule_id") or "Anomaly Detected"
-                    violation = html_escape(str(violation_val).replace("_", " ").title())
-                    guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "G-Level"))
-                    issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
-                    impact = html_escape(str(finding.get("impact") or "N/A"))
-                    element = finding.get("element") or finding.get("selector") or ""
-                    fix = html_escape(str(finding.get("fix") or "No programmatic fix available."))
-                    
-                    safe_element = html_escape(str(element))
-                    if len(safe_element) > 150: safe_element = safe_element[:147] + "..."
-                    
-                    html += f"""
-                        <tr style="border-bottom: 1px solid #e2e8f0; page-break-inside: avoid;">
-                            <td style="padding: 12px; vertical-align: top; text-align: left;"><strong>{violation}</strong><br><span style="color: #64748b; font-size:0.9em; margin-top: 4px; display: inline-block;">{guideline}</span></td>
-                            <td style="padding: 12px; vertical-align: top; text-align: left;"><span class="badge {agent_key}">{impact}</span></td>
-                            <td style="padding: 12px; vertical-align: top; text-align: left;">
-                                <div style="margin-bottom: 6px; color: #334155;">{issue_desc}</div>
-                                <div style="color: #047857; font-size: 0.9em; margin-top: 4px;"><strong>Fix:</strong> {fix}</div>
-                            </td>
-                            <td style="padding: 12px; vertical-align: top; text-align: left; font-family: monospace; font-size: 0.9em; color: #475569; word-break: break-all;">{safe_element}</td>
-                        </tr>
-                    """
-                    global_idx += 1
-                html += "</tbody></table>"
-            
-        else:
+            html += f"""
+            <div class="findings-table-container">
+            <table class="findings-table">
+                <thead>
+                    <tr>
+                        <th style="width: 25%;">Rule / Anomaly</th>
+                        <th style="width: 10%;">Impact</th>
+                        <th style="width: 40%;">Diagnosis & Remediation</th>
+                        <th style="width: 25%;">DOM Signature</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
             for finding in agent_list:
                 violation_val = finding.get("violation") or finding.get("rule_id") or "Anomaly Detected"
                 violation = html_escape(str(violation_val).replace("_", " ").title())
@@ -413,60 +418,32 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                 issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
                 impact = html_escape(str(finding.get("impact") or "N/A"))
                 element = finding.get("element") or finding.get("selector") or ""
-                url = html_escape(str(finding.get("url") or ""))
-                
                 fix = html_escape(str(finding.get("fix") or "No programmatic fix available."))
-                    
-                conf_val = finding.get("confidence_score")
-                conf_pct = float(conf_val)*100 if conf_val else 85.0
                 
-                html_content = f"""
-                    <div class="finding {agent_key}">
-                        <div class="finding-header">
-                            <h4 class="finding-title">{global_idx}. {violation}</h4>
-                            <div class="finding-tags">
-                                <span class="badge {agent_key}">{agent_key.upper()}</span>
-                                <span class="badge guideline">{guideline}</span>
-                            </div>
-                        </div>
-                        {f'<div class="url-source">{url}</div>' if url else ''}
-                        
-                        <div class="row">
-                            <div class="label">Impact</div>
-                            <div class="value">{impact}</div>
-                        </div>
-                        <div class="row">
-                            <div class="label">Diagnosis</div>
-                            <div class="value">{issue_desc}</div>
-                        </div>
-                """
+                safe_element = html_escape(str(element))
+                if len(safe_element) > 300: safe_element = safe_element[:297] + "..."
                 
-                if element:
-                    safe_element = html_escape(str(element))
-                    html_content += f"""
-                        <div class="row" style="margin-top: 16px; flex-direction: column;">
-                            <div class="label" style="margin-bottom: 8px;">DOM Signature</div>
-                            <div class="code-block">{safe_element}</div>
-                        </div>
-                    """
-                    
-                html_content += f"""
-                        <div class="fix-block">
-                            <div class="fix-icon">🛠️</div>
-                            <div class="fix-content">
-                                <div class="fix-title">Remediation Vector</div>
-                                <div>{fix}</div>
-                            </div>
-                        </div>
-                        
-                        <div class="conf-bar-container">
-                            <div class="conf-bar" style="width: {conf_pct}%;"></div>
-                        </div>
-                        <span class="conf-text">AI Confidence Score: {conf_pct:.1f}%</span>
-                    </div>
+                html += f"""
+                    <tr>
+                        <td>
+                            <div class="anomaly-title">{violation}</div>
+                            <span class="anomaly-guideline">{guideline}</span>
+                        </td>
+                        <td><span class="badge {agent_key}">{impact}</span></td>
+                        <td>
+                            <div style="color: #334155; margin-bottom: 6px;">{issue_desc}</div>
+                            <div class="fix-guide"><strong>Fix:</strong> {fix}</div>
+                        </td>
+                        <td>
+                            <code class="dom-code">{safe_element}</code>
+                        </td>
+                    </tr>
                 """
-                html += html_content
                 global_idx += 1
+            html += "</tbody></table></div>"
+            
+        else:
+            pass
 
     html += """
         </div>
@@ -540,8 +517,8 @@ def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     print(f"Total findings to render: {total_findings}")
 
     # Threshold for chunking (switch to chunking if dataset is massive)
-    CHUNK_THRESHOLD = 300
-    CHUNK_SIZE = 1500
+    CHUNK_THRESHOLD = 150
+    CHUNK_SIZE = 150
 
     output_dir = os.path.dirname(os.path.abspath(output_pdf_path))
 

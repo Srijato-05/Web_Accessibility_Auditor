@@ -34,7 +34,14 @@ class ComplianceMapper:
         "heuristic-skip": "Operable",
         "heuristic-head": "Perceivable",
         "heuristic-lang": "Understandable",
-        "heuristic-focus-trap": "Operable"
+        "heuristic-focus-trap": "Operable",
+        "engine-aria": "Robust",
+        "engine-struct": "Understandable",
+        "engine-form-label": "Understandable",
+        "engine-focus": "Operable",
+        "engine-color": "Perceivable",
+        "engine-interact": "Operable",
+        "engine-css": "Perceivable"
     }
 
     # Keyword patterns for Rule IDs and Tags

@@ -695,29 +695,6 @@ async def export_logs():
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse("No logs recorded yet.", status_code=200)
 
-@router.get("/reports/{audit_id}/download")
-async def download_report(audit_id: str):
-    import glob
-    
-    try:
-        safe_id = str(UUID(audit_id))[:8]
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid audit ID")
-        
-    export_dir = os.path.join(PROJECT_ROOT, "reports", "exports")
-    search_pattern = os.path.join(export_dir, f"audit_report_{safe_id}_*.pdf")
-    files = glob.glob(search_pattern)
-    
-    if not files:
-        raise HTTPException(status_code=404, detail="PDF report not found or still generating.")
-        
-    latest_file = max(files, key=os.path.getmtime)
-    
-    return FileResponse(
-        path=latest_file,
-        filename=f"Clinical_Accessibility_Report_{safe_id}.pdf",
-        media_type="application/pdf"
-    )
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
@@ -835,7 +812,7 @@ async def download_report(session_id: str, background_tasks: BackgroundTasks):
     latest_pdf = max(matches, key=os.path.getctime)
     return FileResponse(
         path=latest_pdf,
-        filename=os.path.basename(latest_pdf),
+        filename=f"Accessibility_Report_{short_id}.pdf",
         media_type='application/pdf',
         content_disposition_type="inline"
     )

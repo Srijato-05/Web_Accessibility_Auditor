@@ -847,6 +847,51 @@ class PlaywrightEngine(IBrowserEngine):
                     
                     # Run WCAG2AA sweep and extract JSON matching Axe schema
                     htmlcs_raw = await page.evaluate('''() => {
+                        function getUniqueSelector(el) {
+                            if (!(el instanceof Element)) return "";
+                            const path = [];
+                            let current = el;
+                            while (current && current.nodeType === Node.ELEMENT_NODE) {
+                                let selector = current.nodeName.toLowerCase();
+                                if (current.id) {
+                                    selector += '#' + current.id;
+                                    path.unshift(selector);
+                                    break;
+                                } else {
+                                    let sib = current, nth = 1;
+                                    while (sib = sib.previousElementSibling) {
+                                        if (sib.nodeName.toLowerCase() === selector) nth++;
+                                    }
+                                    if (nth > 1) {
+                                        selector += `:nth-of-type(${nth})`;
+                                    } else {
+                                        let nextSib = current;
+                                        let hasNext = false;
+                                        while (nextSib = nextSib.nextElementSibling) {
+                                            if (nextSib.nodeName.toLowerCase() === selector) {
+                                                hasNext = true;
+                                                break;
+                                            }
+                                        }
+                                        if (hasNext) selector += ":nth-of-type(1)";
+                                    }
+                                }
+                                path.unshift(selector);
+                                current = current.parentElement;
+                            }
+                            return path.join(' > ');
+                        }
+
+                        function getElementSignature(el) {
+                            if (!el) return "";
+                            try {
+                                const clone = el.cloneNode(false);
+                                return clone.outerHTML || el.tagName.toLowerCase();
+                            } catch (e) {
+                                return el.tagName.toLowerCase();
+                            }
+                        }
+
                         return new Promise((resolve) => {
                             HTMLCS.process('WCAG2AA', document, function() {
                                 const messages = HTMLCS.getMessages();
@@ -855,12 +900,10 @@ class PlaywrightEngine(IBrowserEngine):
                                     const msg = messages[i];
                                     if (msg.type === HTMLCS.ERROR || msg.type === HTMLCS.WARNING) {
                                         let selector = "Unknown";
+                                        let htmlSig = "N/A";
                                         if (msg.element && msg.element.tagName) {
-                                            selector = msg.element.tagName.toLowerCase();
-                                            if(msg.element.id) selector += "#" + msg.element.id;
-                                            if(msg.element.className && typeof msg.element.className === "string") {
-                                                selector += "." + msg.element.className.split(" ").join(".");
-                                            }
+                                            selector = getUniqueSelector(msg.element) || msg.element.tagName.toLowerCase();
+                                            htmlSig = getElementSignature(msg.element);
                                         }
                                         results.push({
                                             id: msg.code,
@@ -872,7 +915,7 @@ class PlaywrightEngine(IBrowserEngine):
                                             selector: selector,
                                             nodes: [{
                                                 target: [selector],
-                                                html: msg.element ? msg.element.outerHTML.substring(0,200) : "N/A",
+                                                html: htmlSig,
                                                 failureSummary: msg.msg
                                             }]
                                         });
