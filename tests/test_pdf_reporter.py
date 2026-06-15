@@ -32,7 +32,7 @@ def test_generate_html_from_json():
     assert "Accessibility Report" in html
     assert "https://test.com" in html
     assert "Alt missing" in html
-    assert "AXE" in html
+    assert "Axe" in html
     assert "Perceivable" in html
 
     # Test Fallbacks
@@ -217,3 +217,63 @@ def test_pdf_reporter_main():
             output_pdf = os.path.splitext(json_path)[0] + ".pdf"
         pr.convert_json_to_pdf(json_path, output_pdf)
         mock_convert.assert_called_with("valid.json", "valid.pdf")
+
+@patch("auditor.infrastructure.pdf_reporter.sync_playwright")
+def test_convert_json_to_pdf_chunking(mock_sync_playwright):
+    # Setup Playwright mock chain
+    mock_p = MagicMock()
+    mock_browser = MagicMock()
+    mock_context = MagicMock()
+    mock_page = MagicMock()
+    
+    mock_sync_playwright.return_value.__enter__.return_value = mock_p
+    mock_p.chromium.launch.return_value = mock_browser
+    mock_browser.new_context.return_value = mock_context
+    mock_context.new_page.return_value = mock_page
+
+    # Create pypdf mocks
+    mock_writer = MagicMock()
+    
+    # Generate >150 findings (e.g. 155 findings)
+    findings = [
+        {
+            "rule_id": "image-alt",
+            "compliance_level": "A",
+            "category": "Perceivable",
+            "description": "Alt missing",
+            "impact": "critical",
+            "selector": "img",
+            "fix": "Add alt",
+            "agent": "axe",
+            "url": "https://test.com"
+        }
+        for _ in range(155)
+    ]
+    
+    data = {
+        "session_id": "test-session-id",
+        "violations": findings
+    }
+    
+    # Save to temp JSON
+    with NamedTemporaryFile(suffix=".json", mode="w", delete=False, encoding="utf-8") as f:
+        json.dump(data, f)
+        json_path = f.name
+        
+    pdf_path = json_path.replace(".json", ".pdf")
+    
+    with patch("pypdf.PdfWriter", return_value=mock_writer), \
+         patch("auditor.infrastructure.pdf_reporter.CHUNK_THRESHOLD", 150), \
+         patch("auditor.infrastructure.pdf_reporter.CHUNK_SIZE", 150):
+        try:
+            convert_json_to_pdf(json_path, pdf_path)
+            
+            # Verify pypdf and Playwright were called
+            mock_writer.append.assert_called()
+            mock_writer.write.assert_called_with(pdf_path)
+            mock_writer.close.assert_called()
+            mock_p.chromium.launch.assert_called_once()
+        finally:
+            os.remove(json_path)
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)

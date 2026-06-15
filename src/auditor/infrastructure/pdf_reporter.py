@@ -12,7 +12,7 @@ if _root not in sys.path:
 
 from playwright.sync_api import sync_playwright # type: ignore
 
-def generate_html_from_json(data: Dict[str, Any], override_findings: list = None, hide_header: bool = False) -> str:
+def generate_html_from_json(data: Dict[str, Any], override_findings: list = None, hide_header: bool = False, global_start_idx: int = 1) -> str:
     """Generates a Clinical-Grade HTML report from the JSON audit findings."""
     session_id = data.get("session_id", "Unknown")
     target_url = data.get("target_url", "Multiple Targets" if data.get("is_crawl", False) else "Unknown")
@@ -381,19 +381,21 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
         "neural": "Neural & Kinetic Vestibular Triggers"
     }
 
-    global_idx = 1
+    global_idx = global_start_idx
     for agent_key in ["axe", "htmlcs", "visual", "motor", "cognitive", "neural"]:
         agent_list = grouped_findings[agent_key]
         if not agent_list:
             continue
             
         agent_title = agent_titles[agent_key]
+        total_for_agent = by_agent.get(agent_key, 0)
+        show_continued = " (Continued)" if (hide_header and len(agent_list) < total_for_agent) else ""
         html += f"""
             <h3 style="margin-top: 50px; margin-bottom: 20px; font-size: 1.4em; color: #334155; display: flex; align-items: center; gap: 10px;">
                 <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: {
                     '#64748b' if agent_key=='axe' else '#d97706' if agent_key=='htmlcs' else '#3b82f6' if agent_key=='visual' else '#10b981' if agent_key=='motor' else '#8b5cf6' if agent_key=='cognitive' else '#ef4444'
                 }"></span>
-                {agent_title} ({len(agent_list)})
+                {agent_title} ({total_for_agent}){show_continued}
             </h3>
         """
         
@@ -412,13 +414,26 @@ def generate_html_from_json(data: Dict[str, Any], override_findings: list = None
                 <tbody>
             """
             for finding in agent_list:
+                nodes = finding.get("nodes") or []
+                node = nodes[0] if (isinstance(nodes, list) and len(nodes) > 0 and isinstance(nodes[0], dict)) else {}
+
                 violation_val = finding.get("violation") or finding.get("rule_id") or "Anomaly Detected"
-                violation = html_escape(str(violation_val).replace("_", " ").title())
+                violation = f"#{global_idx} - {html_escape(str(violation_val).replace('_', ' ').title())}"
                 guideline = html_escape(str(finding.get("guideline") or finding.get("compliance_level") or "G-Level"))
-                issue_desc = html_escape(str(finding.get("issue") or finding.get("description") or "No description provided."))
+                
+                issue_desc = finding.get("issue") or finding.get("description")
+                if not issue_desc:
+                    issue_desc = node.get("failureSummary") or node.get("failure_summary") or "No description provided."
+                issue_desc = html_escape(str(issue_desc))
+                
                 impact = html_escape(str(finding.get("impact") or "N/A"))
-                element = finding.get("element") or finding.get("selector") or ""
-                fix = html_escape(str(finding.get("fix") or "No programmatic fix available."))
+                
+                element = finding.get("element") or finding.get("selector")
+                if not element:
+                    element = node.get("html") or (node.get("target")[0] if (node.get("target") and isinstance(node.get("target"), list)) else "") or ""
+                
+                fix = finding.get("fix") or node.get("fix") or "No programmatic fix available."
+                fix = html_escape(str(fix))
                 
                 safe_element = html_escape(str(element))
                 if len(safe_element) > 300: safe_element = safe_element[:297] + "..."
@@ -501,6 +516,9 @@ def _render_chunks_to_pdfs(chunks_data: list, output_dir: str):
                 except OSError as cleanup_err:
                     print(f"Cleanup warning: Could not remove temporary HTML {path}: {cleanup_err}")
 
+CHUNK_THRESHOLD = 1000
+CHUNK_SIZE = 1000
+
 def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     """
     Reads a JSON findings file, generates an HTML report, and
@@ -515,10 +533,6 @@ def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     findings = list(raw_findings) if raw_findings is not None else []
     total_findings = len(findings)
     print(f"Total findings to render: {total_findings}")
-
-    # Threshold for chunking (switch to chunking if dataset is massive)
-    CHUNK_THRESHOLD = 150
-    CHUNK_SIZE = 150
 
     output_dir = os.path.dirname(os.path.abspath(output_pdf_path))
 
@@ -551,12 +565,14 @@ def convert_json_to_pdf(json_path: str, output_pdf_path: str):
     render_tasks = []
     temp_pdf_paths = []
     
+    global_start = 1
     for index, chunk in enumerate(chunks):
         hide_header = index > 0
-        html_content = generate_html_from_json(data, override_findings=chunk, hide_header=hide_header)
+        html_content = generate_html_from_json(data, override_findings=chunk, hide_header=hide_header, global_start_idx=global_start)
         temp_pdf_path = os.path.join(output_dir, f"temp_chunk_{index}_{os.path.basename(output_pdf_path)}")
         render_tasks.append((html_content, temp_pdf_path))
         temp_pdf_paths.append(temp_pdf_path)
+        global_start += len(chunk)
 
     try:
         print(f"Rendering {len(render_tasks)} PDF chunks to disk using single Playwright context...")

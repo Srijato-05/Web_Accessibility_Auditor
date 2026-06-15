@@ -13,6 +13,8 @@ import uuid
 from uuid import UUID
 import datetime
 import asyncio
+from typing import Any, Dict, Optional, List
+from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
 
 from sqlalchemy.ext.asyncio import create_async_engine # type: ignore
 from sqlmodel import SQLModel # type: ignore
@@ -74,12 +76,110 @@ def is_safe_url(url: str) -> bool:
         return False
 
 # Unified Database Configuration
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(DATABASE_URL, connect_args={"timeout": 30.0}, echo=False)
+
+# WAL journal mode optimization for SQLite high concurrency
+from sqlalchemy import event # type: ignore
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
+    finally:
+        cursor.close()
+
 task_queue = RedisTaskQueue(REDIS_URL, db_engine=engine)
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        
+        # Schema migration check to dynamically add columns to existing SQLite tables
+        def migrate_sqlite(connection):
+            # 1. targets table
+            res = connection.exec_driver_sql("PRAGMA table_info(targets);")
+            target_cols = {row[1] for row in res.fetchall()}
+            if target_cols:
+                if "priority" not in target_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE targets ADD COLUMN priority INTEGER DEFAULT 3;")
+                    except Exception as e: print(f"[Migration] Failed to add targets.priority: {e}")
+                if "retry_count" not in target_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE targets ADD COLUMN retry_count INTEGER DEFAULT 0;")
+                    except Exception as e: print(f"[Migration] Failed to add targets.retry_count: {e}")
+                if "last_error" not in target_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE targets ADD COLUMN last_error TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add targets.last_error: {e}")
+                if "scan_profile" not in target_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE targets ADD COLUMN scan_profile TEXT DEFAULT '{}';")
+                    except Exception as e: print(f"[Migration] Failed to add targets.scan_profile: {e}")
+            
+            # 2. violations table
+            res = connection.exec_driver_sql("PRAGMA table_info(violations);")
+            violation_cols = {row[1] for row in res.fetchall()}
+            if violation_cols:
+                if "agent" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN agent TEXT DEFAULT 'axe';")
+                    except Exception as e: print(f"[Migration] Failed to add violations.agent: {e}")
+                if "compliance_level" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN compliance_level TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add violations.compliance_level: {e}")
+                if "category" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN category TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add violations.category: {e}")
+                if "severity_matrix" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN severity_matrix TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add violations.severity_matrix: {e}")
+                if "url" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN url TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add violations.url: {e}")
+                if "confidence_score" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN confidence_score REAL;")
+                    except Exception as e: print(f"[Migration] Failed to add violations.confidence_score: {e}")
+                if "verification_status" not in violation_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE violations ADD COLUMN verification_status TEXT DEFAULT 'unverified';")
+                    except Exception as e: print(f"[Migration] Failed to add violations.verification_status: {e}")
+            
+            # 3. audit_sessions table
+            res = connection.exec_driver_sql("PRAGMA table_info(audit_sessions);")
+            session_cols = {row[1] for row in res.fetchall()}
+            if session_cols:
+                if "remediation_plan" not in session_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE audit_sessions ADD COLUMN remediation_plan TEXT;")
+                    except Exception as e: print(f"[Migration] Failed to add audit_sessions.remediation_plan: {e}")
+                if "agent_summary" not in session_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE audit_sessions ADD COLUMN agent_summary TEXT DEFAULT '{}';")
+                    except Exception as e: print(f"[Migration] Failed to add audit_sessions.agent_summary: {e}")
+                if "focus_path" not in session_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE audit_sessions ADD COLUMN focus_path TEXT DEFAULT '[]';")
+                    except Exception as e: print(f"[Migration] Failed to add audit_sessions.focus_path: {e}")
+                if "aria_events" not in session_cols:
+                    try: connection.exec_driver_sql("ALTER TABLE audit_sessions ADD COLUMN aria_events TEXT DEFAULT '[]';")
+                    except Exception as e: print(f"[Migration] Failed to add audit_sessions.aria_events: {e}")
+            
+        await conn.run_sync(migrate_sqlite)
+
+async def cleanup_orphaned_targets():
+    async with AsyncSession(engine) as db_session:
+        try:
+            from auditor.domain.models import DomainStatus
+            repository = SqlAlchemyTargetRepository(db_session)
+            domains = await repository.get_all_domains()
+            cleaned_count = 0
+            for d in domains:
+                status_val = d.status.value if hasattr(d.status, 'value') else str(d.status)
+                if d.status == DomainStatus.CRAWLING or status_val == "crawling":
+                    d.status = DomainStatus.FAILED
+                    d.last_error = "Audit process aborted due to system shutdown or crash. Click Activate or Resume to run again."
+                    await repository.update_domain(d)
+                    cleaned_count += 1
+            if cleaned_count > 0:
+                print(f"DATABASE CLEANUP: Recovered and marked {cleaned_count} orphaned crawling target(s) as failed.")
+                await db_session.commit()
+        except Exception as e:
+            print(f"DATABASE CLEANUP ERROR: {e}")
 
 class AuditRequest(BaseModel):
     url: str
@@ -445,6 +545,33 @@ class ScanRequest(BaseModel):
 
 async def async_run_site_audit_worker(url: str, depth: int, config: dict = None):
     async with AsyncSession(engine) as db_session:
+        target_repo = SqlAlchemyTargetRepository(db_session)
+        domain = await target_repo.get_domain_by_url(url)
+        profile = domain.scan_profile if (domain and domain.scan_profile) else (config or {})
+        
+        max_depth = profile.get("depth", depth)
+        max_pages = profile.get("max_pages", 20)
+        concurrency = profile.get("concurrency", 3)
+
+        # Resilient Checkpoint Callback
+        target_url = url
+        async def checkpoint_cb(state: Any):
+            try:
+                async with AsyncSession(engine) as cb_session:
+                    cb_repo = SqlAlchemyTargetRepository(cb_session)
+                    db_domain = await cb_repo.get_domain_by_url(target_url)
+                    if db_domain:
+                        if db_domain.scan_profile is None:
+                            db_domain.scan_profile = {}
+                        if state is None:
+                            db_domain.scan_profile.pop("checkpoint", None)
+                        else:
+                            db_domain.scan_profile["checkpoint"] = state
+                        await cb_repo.update_domain(db_domain)
+            except Exception as cb_err:
+                import logging
+                logging.getLogger("auditor.api").warning(f"Resilient Checkpoint Save Failure in API for {target_url}: {cb_err}")
+
         # 1. Initialize Infrastructure Components
         repo = SqlAlchemyAuditRepository(db_session)
         from auditor.infrastructure.playwright_engine import PlaywrightEngine
@@ -453,7 +580,7 @@ async def async_run_site_audit_worker(url: str, depth: int, config: dict = None)
         from auditor.application.audit_service import AuditService
         from auditor.application.crawl_service import CrawlService
         
-        browser = PlaywrightEngine(uuid.uuid4(), config=config)
+        browser = PlaywrightEngine(uuid.uuid4(), config=profile)
         crawler = PlaywrightLinkExtractor()
         
         # 2. Assemble Service Layer
@@ -463,10 +590,11 @@ async def async_run_site_audit_worker(url: str, depth: int, config: dict = None)
         crawl_orchestrator = CrawlService(
             audit_service=audit_service,
             crawler_service=discovery_service,
-            max_depth=depth,
-            max_pages=20,
-            concurrency=3,
-            config=config
+            max_depth=max_depth,
+            max_pages=max_pages,
+            concurrency=concurrency,
+            config=profile,
+            checkpoint_callback=checkpoint_cb
         )
         
         # 3. Execution
@@ -695,7 +823,6 @@ async def export_logs():
     from fastapi.responses import PlainTextResponse
     return PlainTextResponse("No logs recorded yet.", status_code=200)
 
-
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
     try:
@@ -764,8 +891,11 @@ async def download_report(session_id: str, background_tasks: BackgroundTasks):
     short_id = str(session_id)[:8] # type: ignore
     
     # 1. Look for combined report first
-    combined_pattern = os.path.join(reports_out, f"audit_report_{short_id}_*.pdf")
+    combined_pattern = os.path.join(reports_out, f"audit_report_*_{short_id}_*.pdf")
     matches = glob.glob(combined_pattern)
+    if not matches:
+        combined_pattern_old = os.path.join(reports_out, f"audit_report_{short_id}_*.pdf")
+        matches = glob.glob(combined_pattern_old)
     
     if not matches:
         # Fallback 1: Try on-the-fly regeneration using AuditReporter
@@ -838,9 +968,257 @@ async def generate_report_manually(session_id: str):
                 "message": "Report regenerated successfully",
                 "pdf_path": os.path.basename(out_pdf)
             }
+        except ValueError as val_err:
+            raise HTTPException(status_code=400, detail=f"Invalid session ID format: {val_err}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+class ToggleTargetRequest(BaseModel):
+    url: str
+
+class CreateTargetRequest(BaseModel):
+    url: str
+    priority: int = 3
+    frequency_hours: int = 24
+    scan_profile: Dict[str, Any] = {}
+
+class UpdateTargetRequest(BaseModel):
+    url: str
+    priority: Optional[int] = None
+    frequency_hours: Optional[int] = None
+    scan_profile: Optional[Dict[str, Any]] = None
+
+class DiscoverRequest(BaseModel):
+    url: str
+
+class BatchRunRequest(BaseModel):
+    use_queue: bool = False
+
+    class Config:
+        extra = "forbid"
+
+@router.get("/targets")
+async def get_targets():
+    async with AsyncSession(engine) as db_session:
+        repository = SqlAlchemyTargetRepository(db_session)
+        domains = await repository.get_all_domains()
+        
+        from sqlmodel import select
+        from auditor.infrastructure.persistence_models import AuditSessionModel
+        
+        enriched_domains = []
+        for d in domains:
+            latest_session_id = None
+            try:
+                stmt = select(AuditSessionModel).where(AuditSessionModel.target_url == d.url).order_by(AuditSessionModel.created_at.desc())
+                res = await db_session.exec(stmt)
+                latest_session = res.first()
+                if latest_session:
+                    latest_session_id = str(latest_session.id)
+            except Exception:
+                pass
+            
+            enriched_domains.append({
+                "id": str(d.id),
+                "url": d.url,
+                "status": d.status.value if hasattr(d.status, 'value') else str(d.status),
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "last_audit_at": d.last_audit_at.isoformat() if d.last_audit_at else None,
+                "frequency_hours": d.frequency_hours,
+                "priority": d.priority,
+                "retry_count": d.retry_count,
+                "last_error": d.last_error,
+                "scan_profile": d.scan_profile,
+                "last_session_id": latest_session_id
+            })
+        return enriched_domains
+
+@router.get("/targets/diff")
+async def get_target_diff(url: str):
+    from auditor.application.diff_service import AuditDiffService
+    diff_service = AuditDiffService(engine)
+    res = await diff_service.calculate_diff_by_target(url)
+    return res
+
+@router.post("/targets")
+async def create_target(req: CreateTargetRequest):
+    if not is_safe_url(req.url):
+        raise HTTPException(status_code=400, detail="Unsafe or invalid URL provided.")
+    
+    async with AsyncSession(engine) as db_session:
+        repository = SqlAlchemyTargetRepository(db_session)
+        existing = await repository.get_domain_by_url(req.url)
+        if existing:
+            return {"status": "already_exists", "id": str(existing.id)}
+            
+        from auditor.domain.models import AuditTarget
+        new_domain = AuditTarget(
+            url=req.url,
+            priority=req.priority,
+            frequency_hours=req.frequency_hours,
+            scan_profile=req.scan_profile
+        )
+        await repository.add_domain(new_domain)
+        return {"status": "success", "id": str(new_domain.id)}
+
+@router.post("/targets/update")
+async def update_target(req: UpdateTargetRequest):
+    async with AsyncSession(engine) as db_session:
+        repository = SqlAlchemyTargetRepository(db_session)
+        domain = await repository.get_domain_by_url(req.url)
+        if not domain:
+            raise HTTPException(status_code=404, detail="Target not found")
+        
+        if req.priority is not None:
+            domain.priority = req.priority
+        if req.frequency_hours is not None:
+            domain.frequency_hours = req.frequency_hours
+        if req.scan_profile is not None:
+            domain.scan_profile = req.scan_profile
+            
+        await repository.update_domain(domain)
+        return {"status": "success"}
+
+@router.post("/targets/prune")
+async def prune_targets():
+    async with AsyncSession(engine) as db_session:
+        from auditor.domain.models import DomainStatus
+        repository = SqlAlchemyTargetRepository(db_session)
+        domains = await repository.get_all_domains()
+        pruned_count = 0
+        for d in domains:
+            if d.status == DomainStatus.FAILED:
+                await repository.delete_domain(d.url)
+                pruned_count += 1
+        return {"status": "success", "pruned_count": pruned_count}
+
+@router.post("/targets/toggle")
+async def toggle_target(req: ToggleTargetRequest):
+    async with AsyncSession(engine) as db_session:
+        repository = SqlAlchemyTargetRepository(db_session)
+        domain = await repository.get_domain_by_url(req.url)
+        if not domain:
+            raise HTTPException(status_code=404, detail="Target not found")
+        
+        from auditor.domain.models import DomainStatus
+        if domain.status == DomainStatus.PAUSED:
+            domain.status = DomainStatus.ACTIVE
+        else:
+            domain.status = DomainStatus.PAUSED
+            
+        await repository.update_domain(domain)
+        return {"status": "success", "new_status": domain.status.value}
+
+@router.delete("/targets")
+async def delete_target(url: str):
+    async with AsyncSession(engine) as db_session:
+        repository = SqlAlchemyTargetRepository(db_session)
+        await repository.delete_domain(url)
+        return {"status": "success"}
+
+async def async_run_discovery(url: str):
+    queue = RedisTaskQueue(db_engine=engine)
+    from auditor.infrastructure.link_extractor import PlaywrightLinkExtractor
+    from auditor.domain.crawler import LinkDiscoveryService
+    from auditor.application.discovery_service import DiscoveryService
+    
+    link_extractor = PlaywrightLinkExtractor()
+    crawler = LinkDiscoveryService(link_extractor)
+    try:
+        async with AsyncSession(engine) as db_session:
+            repo = SqlAlchemyTargetRepository(db_session)
+            discovery = DiscoveryService(queue, crawler, repo)
+            await discovery.run_discovery_session(url)
+    except Exception as e:
+        import logging
+        logging.getLogger("auditor.api").error(f"Background Target Discovery Failed [{url}]: {e}")
+    finally:
+        await link_extractor.teardown()
+
+@router.post("/targets/discover")
+async def discover_targets(req: DiscoverRequest, background_tasks: BackgroundTasks):
+    if not is_safe_url(req.url):
+        raise HTTPException(status_code=400, detail="Unsafe or invalid URL provided.")
+    
+    background_tasks.add_task(async_run_discovery, req.url)
+    return {"status": "started", "message": "Autonomously discovering target links in background."}
+
+async def async_run_batch_audit_manager():
+    from auditor.application.batch_service import BatchAuditManager
+    manager = BatchAuditManager(engine)
+    try:
+        await manager.run_batch_audit()
+    except Exception as e:
+        import logging
+        logging.getLogger("auditor.api").error(f"Background Batch Audit Manager Run Failed: {e}")
+
+@router.post("/batch/run")
+async def run_batch_audit(req: BatchRunRequest, background_tasks: BackgroundTasks):
+    from auditor.application.batch_service import BatchAuditManager
+    if req.use_queue:
+        manager = BatchAuditManager(engine)
+        res = await manager.dispatch_batch_audit()
+        return {"status": "dispatched", "count": res.get("count", 0)}
+    else:
+        background_tasks.add_task(async_run_batch_audit_manager)
+        return {"status": "started", "message": "Batch audit initiated in parallel in the background."}
+
+@router.get("/batch/status")
+async def get_batch_status():
+    from auditor.application.batch_service import BatchAuditManager
+    import psutil
+    manager = BatchAuditManager(engine)
+    try:
+        health = await manager.get_system_health_report()
+        health["cpu_percent"] = psutil.cpu_percent()
+        health["ram_percent"] = psutil.virtual_memory().percent
+        return health
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/batch/export/csv")
+async def export_batch_csv():
+    from auditor.application.batch_exporter import BatchReportExporter
+    exporter = BatchReportExporter(engine)
+    csv_path = await exporter.generate_aggregated_csv()
+    if not csv_path or not os.path.exists(csv_path):
+        raise HTTPException(status_code=500, detail="Failed to compile batch CSV export.")
+    
+    filename = os.path.basename(csv_path)
+    return FileResponse(
+        csv_path,
+        media_type="text/csv",
+        filename=filename
+    )
+
+@router.get("/batch/export/violations/csv")
+async def export_violations_csv():
+    from auditor.application.batch_exporter import BatchReportExporter
+    exporter = BatchReportExporter(engine)
+    csv_path = await exporter.generate_detailed_violations_csv()
+    if not csv_path or not os.path.exists(csv_path):
+        raise HTTPException(status_code=500, detail="Failed to compile detailed violations CSV export.")
+    
+    filename = os.path.basename(csv_path)
+    return FileResponse(
+        csv_path,
+        media_type="text/csv",
+        filename=filename
+    )
 
 @router.post("/support/ticket")
 async def support_ticket(request: Request):
     return {"status": "success"}
+
+def ensure_directories():
+    """Ensure that the reporting and export directories exist."""
+    import os
+    from auditor.shared.paths import REPORTS_DIR, EXPORTS_DIR
+    try:
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        os.makedirs(EXPORTS_DIR, exist_ok=True)
+    except PermissionError as e:
+        import logging
+        logging.getLogger("auditor.api").critical(f"Directory creation permission error: {e}")
+        raise
+
