@@ -197,27 +197,46 @@ class AuditReporter:
         report_data["url"] = session_record.target_url # For HTML parity
 
         # 4. Generate Exports
+        from urllib.parse import urlparse
+        import re
+        parsed_url = urlparse(session_record.target_url)
+        netloc = parsed_url.netloc or "unknown"
+        netloc = netloc.split(":")[0].replace("www.", "")
+        domain_slug = re.sub(r'[^a-zA-Z0-9]', '_', netloc).strip('_')
+        if not domain_slug:
+            domain_slug = "unknown"
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_id = str(session_record.id)[:8] # type: ignore
-        json_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.json")
-        html_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.html")
-        pdf_path = os.path.join(output_dir, f"audit_report_{safe_id}_{timestamp}.pdf")
+        json_path = os.path.join(output_dir, f"audit_report_{domain_slug}_{safe_id}_{timestamp}.json")
+        html_path = os.path.join(output_dir, f"audit_report_{domain_slug}_{safe_id}_{timestamp}.html")
+        pdf_path = os.path.join(output_dir, f"audit_report_{domain_slug}_{safe_id}_{timestamp}.pdf")
 
         # JSON Export
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report_data, f, indent=4, ensure_ascii=False)
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=4, ensure_ascii=False)
+        except Exception as write_err:
+            self.logger.error(f"Failed to write JSON report to {json_path}: {write_err}")
 
         # HTML Export (Premium Template)
-        html_content = self._build_html_dashboard(report_data)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
+        try:
+            html_content = self._build_html_dashboard(report_data)
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+        except Exception as write_err:
+            self.logger.error(f"Failed to write HTML report to {html_path}: {write_err}")
 
         # PDF Export (Same Design Principle)
         try:
-            from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
-            import asyncio
-            await asyncio.to_thread(convert_json_to_pdf, json_path, pdf_path)
-            self.logger.info(f"PDF Stakeholder Report Generated: {pdf_path}")
+            if os.path.exists(json_path):
+                from auditor.infrastructure.pdf_reporter import convert_json_to_pdf
+                import asyncio
+                await asyncio.to_thread(convert_json_to_pdf, json_path, pdf_path)
+                self.logger.info(f"PDF Stakeholder Report Generated: {pdf_path}")
+            else:
+                self.logger.error(f"Cannot generate PDF: source JSON report not found at {json_path}")
+                pdf_path = None
         except Exception as e:
             self.logger.error(f"PDF Generation Failed: {e}")
             pdf_path = None

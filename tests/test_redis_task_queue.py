@@ -188,3 +188,40 @@ async def test_redis_queue_pop_task_pending_mode(temp_db_engine):
         assert queue.mode == "LOCAL"
         await queue.disconnect()
 
+@pytest.mark.asyncio
+async def test_redis_queue_telemetry(temp_db_engine):
+    # Test Redis mode active workers
+    mock_redis = AsyncMock()
+    mock_redis.ping.return_value = True
+    mock_redis.client_list.return_value = [{"flags": "N"}, {"flags": "X"}]
+    
+    queue = RedisTaskQueue(redis_urls="redis://localhost:6379", db_engine=temp_db_engine)
+    with patch("auditor.infrastructure.redis_task_queue.from_url", return_value=mock_redis), \
+         patch("auditor.infrastructure.redis_task_queue.REDIS_AVAILABLE", True):
+        await queue.connect()
+        assert queue.mode == "REDIS"
+        workers = await queue.get_active_workers()
+        assert workers == 1
+        
+        # client_list exception
+        mock_redis.client_list.side_effect = Exception("error")
+        workers = await queue.get_active_workers()
+        assert workers == 1
+        
+        # Test complete_task and fail_task in REDIS mode (should pass/no-op)
+        await queue.complete_task("task_id")
+        await queue.fail_task("task_id", "some error")
+        await queue.disconnect()
+
+    # Test Local mode active workers
+    local_queue = RedisTaskQueue(redis_urls="redis://invalid-host:9999", db_engine=temp_db_engine)
+    await local_queue.connect()
+    assert local_queue.mode == "LOCAL"
+    workers = await local_queue.get_active_workers()
+    assert workers == 0
+    
+    # Test fail_task with None or empty
+    await local_queue.fail_task(None, "no-op")
+    await local_queue.complete_task(None)
+    await local_queue.disconnect()
+

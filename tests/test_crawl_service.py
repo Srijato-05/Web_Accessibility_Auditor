@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from auditor.application.crawl_service import CrawlService
 from auditor.domain.audit_session import AuditSession, SessionStatus
 from auditor.domain.exceptions import AuditFailedError
+from auditor.domain.violation import Violation, ImpactLevel
 
 @pytest.mark.asyncio
 async def test_crawl_service_page_links_batching():
@@ -120,7 +121,7 @@ async def test_crawl_service_filtering_and_errors():
                 crawl_service.filtered_count += 1
                 continue
             crawl_service.discovered_count += 1
-            task = asyncio.create_task(crawl_service._process_audit_session(url, depth, queue))
+            task = asyncio.create_task(crawl_service._process_audit_session(url, depth, queue, uuid4()))
             tasks.append(task)
             
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -132,15 +133,13 @@ async def test_crawl_service_filtering_and_errors():
 
 @pytest.mark.asyncio
 async def test_crawl_service_run_success_with_violations():
-    from auditor.domain.violation import Violation, ImpactLevel
     from uuid import uuid4
     
     audit_service = MagicMock()
     audit_service.repository = MagicMock()
     audit_service.repository.save_session = AsyncMock()
     audit_service.repository.save_violations = AsyncMock()
-    audit_service.repository.db_session = MagicMock()
-    audit_service.repository.db_session.commit = AsyncMock()
+    audit_service.repository.db_session = None
     
     crawler_service = MagicMock()
     crawler_service.extract_links = AsyncMock(return_value=["https://example.com/about"])

@@ -20,7 +20,6 @@ class AgentService:
     Singleton manager for the Agentic Accessibility Hub.
     """
     _instance: Optional['AgentService'] = None
-    _lock = asyncio.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -34,6 +33,7 @@ class AgentService:
             
         self.logger = auditor_logger.getChild("AgentService")
         self.controller: Optional[AgentController] = None
+        self._lock = asyncio.Lock()
         self._initialized = True
 
     async def get_controller(self) -> AgentController:

@@ -46,7 +46,7 @@ async def test_neural_dynamic_kinetic_vectorization():
     agent = NeuralAgent()
     element = ElementData(
         tag="div", html="<div class='shift'></div>", selector="div.shift", text="",
-        computed_styles={"transitionDuration": "0.1s, 0.2s"}, attributes={}, 
+        computed_styles={"transitionDuration": "0.1s, 0.2s", "transform": "scale(1.2)"}, attributes={}, 
         bounding_box={"x": 0.0, "y": 0.0, "width": 200.0, "height": 200.0}, parent_styles={}
     )
     page_data = PageData(

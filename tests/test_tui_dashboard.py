@@ -108,3 +108,16 @@ async def test_tui_dashboard_run():
         with pytest.raises(KeyboardInterrupt):
             await dash.run()
         assert mock_live.called
+
+def test_tui_dashboard_path_reconciliation():
+    import sys
+    import importlib
+    import os
+    orig_path = sys.path.copy()
+    try:
+        # Remove any path containing Web_Accessibility_Auditor to simulate running from outside
+        sys.path = [p for p in sys.path if "Web_Accessibility_Auditor" not in p and p != ""]
+        import auditor.application.tui_dashboard
+        importlib.reload(auditor.application.tui_dashboard)
+    finally:
+        sys.path = orig_path

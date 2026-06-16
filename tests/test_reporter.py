@@ -51,7 +51,7 @@ async def test_generate_summary_report_success(temp_db_engine):
         v2 = ViolationModel(
             id=uuid.uuid4(),
             session_id=session_id,
-            rule_id="color-contrast",
+            rule_id="keyboard-nav",
             impact="serious",
             description="Bad contrast",
             selector="button",
@@ -64,7 +64,7 @@ async def test_generate_summary_report_success(temp_db_engine):
         v3 = ViolationModel(
             id=uuid.uuid4(),
             session_id=session_id,
-            rule_id="HEURISTIC-HEAD-047",
+            rule_id="form-label",
             impact="moderate",
             description="Skipped heading",
             selector="h3",
@@ -77,7 +77,7 @@ async def test_generate_summary_report_success(temp_db_engine):
         v4 = ViolationModel(
             id=uuid.uuid4(),
             session_id=session_id,
-            rule_id="robust-check",
+            rule_id="aria-roles",
             impact="minor",
             description="Robust failure",
             selector="div",
@@ -91,6 +91,7 @@ async def test_generate_summary_report_success(temp_db_engine):
             id=uuid.uuid4(),
             session_id=session_id,
             rule_id="general-check",
+            agent="axe",
             impact="minor",
             description="General failure",
             selector="p",
@@ -123,11 +124,11 @@ async def test_generate_summary_report_success(temp_db_engine):
                 data = json.load(f)
                 assert data["session_id"] == str(session_id)
                 assert data["total_violations"] == 5
-                assert data["matrix"]["axe"]["Perceivable"] == 1
+                assert data["matrix"]["axe"]["Perceivable"] == 2
                 assert data["matrix"]["axe"]["Operable"] == 1
                 assert data["matrix"]["axe"]["Understandable"] == 1
                 assert data["matrix"]["axe"]["Robust"] == 1
-                assert data["matrix"]["axe"]["General"] == 1
+                assert data["matrix"]["axe"]["General"] == 0
             
             with open(report_paths["html"], "r") as f:
                 html = f.read()

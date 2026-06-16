@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useTheme, type Theme } from './ThemeContext.tsx';
-import { LayoutDashboard, ScanLine, FileSpreadsheet, Settings, HelpCircle, Activity } from 'lucide-react';
+import { LayoutDashboard, ScanLine, FileSpreadsheet, Settings, HelpCircle, Activity, Database } from 'lucide-react';
 
 export default function Sidebar() {
   const { theme, setTheme } = useTheme();
@@ -10,6 +10,7 @@ export default function Sidebar() {
     { name: 'Scan Console', path: '/', icon: ScanLine },
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Audits Ledger', path: '/audits', icon: FileSpreadsheet },
+    { name: 'Batch Console', path: '/batch', icon: Database },
     { name: 'Settings', path: '/profile', icon: Settings },
     { name: 'Help Center', path: '/help', icon: HelpCircle },
   ];

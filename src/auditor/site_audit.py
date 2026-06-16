@@ -49,28 +49,30 @@ Options:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-    # 2. DDD Component Lifecycle
-    async with AsyncSession(engine) as db_session:
-        repository = SqlAlchemyAuditRepository(db_session)
-        
-        # Performance Service Layer
-        audit_service = AuditService(None, repository)
-        link_extractor = PlaywrightLinkExtractor()
-        crawler_service = LinkDiscoveryService(link_extractor)
-        
-        crawl_orchestrator = CrawlService(
-            audit_service=audit_service,
-            crawler_service=crawler_service,
-            max_depth=2,
-            max_pages=20
-        )
-        
-        try:
-            auditor_logger.info(f"Targeting Domain Ecosystem: {url}")
-            await crawl_orchestrator.run(url)
-            auditor_logger.info(f"National Discovery Swarm DISMISSED.")
-        except Exception as e:
-            auditor_logger.critical(f"FATAL: Autonomous Discovery Failure at {url}: {e}")
+        # 2. DDD Component Lifecycle
+        async with AsyncSession(engine) as db_session:
+            repository = SqlAlchemyAuditRepository(db_session)
+            
+            # Performance Service Layer
+            audit_service = AuditService(None, repository)
+            link_extractor = PlaywrightLinkExtractor()
+            crawler_service = LinkDiscoveryService(link_extractor)
+            
+            crawl_orchestrator = CrawlService(
+                audit_service=audit_service,
+                crawler_service=crawler_service,
+                max_depth=2,
+                max_pages=20
+            )
+            
+            try:
+                auditor_logger.info(f"Targeting Domain Ecosystem: {url}")
+                await crawl_orchestrator.run(url)
+                auditor_logger.info(f"National Discovery Swarm DISMISSED.")
+            except Exception as e:
+                auditor_logger.critical(f"FATAL: Autonomous Discovery Failure at {url}: {e}")
+    except Exception as e:
+        auditor_logger.error(f"Execution Failed: {e}")
     finally:
         if 'engine' in locals():
             await engine.dispose()

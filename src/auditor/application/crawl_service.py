@@ -8,7 +8,7 @@ at the site level.
 """
 
 import asyncio
-from typing import Set, List, cast
+from typing import Set, List, cast, Any
 from urllib.parse import urlparse
 from datetime import datetime
 import sys
@@ -25,7 +25,7 @@ from auditor.shared.logging import auditor_logger # type: ignore
 from auditor.domain.exceptions import AuditFailedError # type: ignore
 from auditor.infrastructure.neo4j_repository import Neo4jRepository # type: ignore
 from auditor.domain.audit_session import AuditSession, SessionStatus # type: ignore
-from auditor.domain.violation import Violation # type: ignore
+from auditor.domain.violation import Violation, ImpactLevel # type: ignore
 from auditor.application.reporter import AuditReporter # type: ignore
 
 class CrawlService:
@@ -45,11 +45,13 @@ class CrawlService:
         max_depth: int = None,
         max_pages: int = None,
         concurrency: int = None,
-        config: dict = None
+        config: dict = None,
+        checkpoint_callback = None
     ):
         self.audit_service = audit_service
         self.crawler_service = crawler_service
         self.config = config or {}
+        self.checkpoint_callback = checkpoint_callback
 
         # Load settings dynamically
         import json
@@ -75,8 +77,16 @@ class CrawlService:
         self.skip_external = settings.get("skip_external", True)
         self._semaphore = asyncio.Semaphore(self.concurrency)
         
+        # Adaptive Rate Limiting & politeness variables
+        self._adaptive_delay = 0.0
+        self._latency_history = []
+        self._active_concurrency = self.concurrency
+        self._adaptive_lock = asyncio.Lock()
+        
         # Phase IX: Hashed ledger for O(1) Billion-Scale Memory Efficiency
         self.visited_url_hashes: Set[int] = set()
+        self.visited_urls: Set[str] = set()
+        self.completed_session_ids: List[str] = []
         self.discovered_count = 0
         self.success_count = 0
         self.failed_count = 0
@@ -100,108 +110,297 @@ class CrawlService:
         Args:
             start_url: The root URL for the discovery process.
         """
+        self.start_url = start_url
         self.logger.info("--- [ DISCOVERY PROCESS INITIATED ] ---")
         self.logger.info(f"Root Target: {start_url} | Capacity: {self.max_pages} pages")
         
         start_time = datetime.now()
         
-        # PRIORITY QUEUE: root=0, depth_1=10, depth_2=20
-        queue = asyncio.PriorityQueue()
-        await queue.put((0, start_url, 0)) 
-        self.visited_url_hashes.add(hash(self._normalize_url(start_url)))
-
-        tasks: List[asyncio.Task] = []
+        checkpoint = self.config.get("checkpoint")
         
-        while not queue.empty() and self.discovered_count < self.max_pages:
-            priority, url, depth = await queue.get()
+        # PROVISION A SHARED PLAYWRIGHT ENGINE FOR THE DURATION OF THIS CRAWL SESSION
+        # This prevents starting and stopping Chrome for every audited sub-page!
+        shared_engine = None
+        if not self.audit_service.engine:
+            import uuid
+            from auditor.infrastructure.playwright_engine import PlaywrightEngine
+            shared_engine = PlaywrightEngine(uuid.uuid4(), config=self.config)
+            await shared_engine.start()
+            self.audit_service.engine = shared_engine
+        
+        try:
+            # Pre-create/restore master session
+            from uuid import UUID
+            db_session = getattr(self.audit_service.repository, "db_session", None)
             
-            # DEPTH CONTROL
-            if depth > self.max_depth:
-                self.logger.debug(f"Audit depth suppression active for: {url}")
-                continue
+            if checkpoint:
+                self.logger.info(f"RESUMING crawl from checkpoint. Master Session ID: {checkpoint.get('master_session_id')}")
+                self.visited_urls = set(checkpoint.get("visited_urls", []))
+                for visited_url in self.visited_urls:
+                    self.visited_url_hashes.add(hash(self._normalize_url(visited_url)))
+                
+                self.success_count = checkpoint.get("success_count", 0)
+                self.failed_count = checkpoint.get("failed_count", 0)
+                self.completed_session_ids = checkpoint.get("completed_session_ids", [])
+                
+                queue = asyncio.PriorityQueue()
+                for item in checkpoint.get("pending_queue", []):
+                    await queue.put((item["priority"], item["url"], item["depth"]))
+                
+                master_session_id_str = checkpoint.get("master_session_id")
+                master_session_id = UUID(master_session_id_str) if master_session_id_str else None
+                
+                try:
+                    master_session = await self.audit_service.repository.get_session(master_session_id)
+                except Exception:
+                    master_session = None
+                
+                if not master_session:
+                    master_session = AuditSession(target_url=start_url)
+                    if master_session_id:
+                        master_session.id = master_session_id
+                    master_session.start()
+                    await self.audit_service.repository.save_session(master_session)
+                    if db_session:
+                        await db_session.commit()
+                
+                self.discovered_count = self.success_count + self.failed_count
+            else:
+                master_session = AuditSession(target_url=start_url)
+                master_session.start()
+                await self.audit_service.repository.save_session(master_session)
+                if db_session:
+                    await db_session.commit()
+                
+                queue = asyncio.PriorityQueue()
+                await queue.put((0, start_url, 0)) 
+                self.visited_urls = {start_url}
+                self.visited_url_hashes.add(hash(self._normalize_url(start_url)))
+                self.completed_session_ids = []
+                self.discovered_count = 0
 
-            # ASSET FILTERING: Preventing resource waste on non-document types
-            if self._is_asset_filtered(url):
-                self.filtered_count += 1
-                continue
-
-            # TECHNICAL PROCESS INITIATION
-            self.discovered_count += 1
-            task = asyncio.create_task(self._process_audit_session(url, depth, queue))
-            tasks.append(task)
+            active_tasks = set()
+            results = []
             
-            # Non-blocking yield to allow task initiation
-            await asyncio.sleep(0.01)
+            while (not queue.empty() or active_tasks) and self.discovered_count < self.max_pages:
+                # Clean up completed tasks
+                done_tasks = {t for t in active_tasks if t.done()}
+                for t in done_tasks:
+                    active_tasks.remove(t)
+                    try:
+                        res = t.result()
+                        results.append(res)
+                    except Exception as e:
+                        results.append(e)
+                
+                # Spawn new tasks up to concurrency limit
+                while not queue.empty() and len(active_tasks) < self.concurrency and self.discovered_count < self.max_pages:
+                    priority, url, depth = await queue.get()
+                    
+                    # DEPTH CONTROL
+                    if depth > self.max_depth:
+                        self.logger.debug(f"Audit depth suppression active for: {url}")
+                        continue
 
-        # Await process completion
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Flush all page links to Neo4j in a single optimized batch
-        if self._links_batch:
-            self.logger.info(f"Batching {len(self._links_batch)} discovered page links to Neo4j...")
-            await self.tg_repo.upsert_page_links_batch_async(self._links_batch)
-        
-        # AGGREGATION PHASE
-        all_violations = []
-        for res in results:
-            if isinstance(res, AuditSession):
-                session: AuditSession = cast(AuditSession, res)
-                if session.status == SessionStatus.COMPLETED:
-                    all_violations.extend(session.violations)
+                    # ASSET FILTERING: Preventing resource waste on non-document types
+                    if self._is_asset_filtered(url):
+                        self.filtered_count += 1
+                        continue
 
-        self.logger.info(f"Aggregated {len(all_violations)} violations across {self.success_count} pages.")
-        
-        # Master Reporting
-        master_session = AuditSession(target_url=start_url)
-        master_session.status = SessionStatus.COMPLETED
-        master_session.violations = all_violations
-        
-        # Link copies of violations to the master session id
-        master_violations = []
-        for v in all_violations:
-            v_copy = Violation(
-                rule_id=v.rule_id,
-                impact=v.impact,
-                description=v.description,
-                help_url=v.help_url,
-                selector=v.selector,
-                nodes=v.nodes,
-                tags=v.tags,
-                session_id=master_session.id,
-                agent=v.agent,
-                compliance_level=v.compliance_level,
-                category=v.category,
-                severity_matrix=v.severity_matrix,
-                url=v.url
-            )
-            master_violations.append(v_copy)
-        
-        # Persist master session and violations in SQLite
-        db_session = getattr(self.audit_service.repository, "db_session", None)
-        await self.audit_service.repository.save_session(master_session)
-        if master_violations:
-            await self.audit_service.repository.save_violations(master_violations)
-        if db_session:
-            await db_session.commit()
-        
-        # Use the database session from the repository and generate the reports
-        reporter = AuditReporter(self.audit_service.repository.db_session) 
-        await reporter.generate_summary_report(session_id=master_session.id)
-        self.logger.info(f"MASTER MISSION REPORT GENERATED for {start_url}")
-        
-        # AUDIT SUMMARY
-        duration = datetime.now() - start_time
-        
-        self.logger.info(f"Discovery Complete for {start_url}")
-        self.logger.info(f"Target Pages Screened: {self.discovered_count}")
-        self.logger.info(f"Successful Audits: {self.success_count}")
-        self.logger.info(f"Audit Failures: {self.failed_count}")
-        self.logger.info(f"Total Audit Duration: {duration}")
-        return master_session
+                    # TECHNICAL PROCESS INITIATION
+                    self.discovered_count += 1
+                    task = asyncio.create_task(self._process_audit_session(url, depth, queue, master_session.id))
+                    active_tasks.add(task)
+                
+                if active_tasks:
+                    # Yield control to let tasks progress
+                    await asyncio.wait(active_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=0.1)
+                else:
+                    await asyncio.sleep(0.1)
+            
+            # Wait for any remaining active tasks to finish
+            if active_tasks:
+                done, pending = await asyncio.wait(active_tasks, return_when=asyncio.ALL_COMPLETED)
+                for t in done:
+                    try:
+                        results.append(t.result())
+                    except Exception as e:
+                        results.append(e)
+            
+            # Flush all page links to Neo4j in a single optimized batch
+            if self._links_batch:
+                self.logger.info(f"Batching {len(self._links_batch)} discovered page links to Neo4j...")
+                await self.tg_repo.upsert_page_links_batch_async(self._links_batch)
+            
+            # AGGREGATION PHASE
+            all_violations = []
+            if db_session:
+                from sqlmodel import select
+                from auditor.infrastructure.persistence_models import ViolationModel
+                for s_id_str in self.completed_session_ids:
+                    try:
+                        s_id = UUID(s_id_str)
+                        stmt = select(ViolationModel).where(ViolationModel.session_id == s_id)
+                        res = await db_session.exec(stmt)
+                        db_violations = res.all()
+                        for v in db_violations:
+                            # Robustly parse impact value from database
+                            impact_val = ImpactLevel.MINOR
+                            if isinstance(v.impact, str):
+                                try:
+                                    impact_val = ImpactLevel(v.impact.lower())
+                                except ValueError:
+                                    pass
+                            elif isinstance(v.impact, ImpactLevel):
+                                impact_val = v.impact
+                            
+                            all_violations.append(
+                                Violation(
+                                    rule_id=v.rule_id,
+                                    impact=impact_val,
+                                    description=v.description,
+                                    help_url=v.help_url,
+                                    selector=v.selector or "",
+                                    nodes=v.nodes or [],
+                                    tags=v.tags or [],
+                                    session_id=master_session.id,
+                                    agent=v.agent or "axe",
+                                    compliance_level=v.compliance_level,
+                                    category=v.category,
+                                    severity_matrix=v.severity_matrix,
+                                    url=v.url,
+                                    confidence_score=v.confidence_score
+                                )
+                            )
+                    except Exception as agg_err:
+                        self.logger.warning(f"Error fetching sub-session violations for {s_id_str}: {agg_err}")
+            else:
+                for res in results:
+                    if isinstance(res, AuditSession):
+                        session: AuditSession = cast(AuditSession, res)
+                        if session.status == SessionStatus.COMPLETED:
+                            all_violations.extend(session.violations)
 
-    async def _process_audit_session(self, url: str, depth: int, queue: asyncio.PriorityQueue):
+            self.logger.info(f"Aggregated {len(all_violations)} violations across {self.success_count} pages.")
+            
+            # Master Reporting
+            master_session.status = SessionStatus.COMPLETED
+            master_session.violations = all_violations
+            
+            # Link copies of violations to the master session id
+            master_violations = []
+            for v in all_violations:
+                v_copy = Violation(
+                    rule_id=v.rule_id,
+                    impact=v.impact,
+                    description=v.description,
+                    help_url=v.help_url,
+                    selector=v.selector,
+                    nodes=v.nodes,
+                    tags=v.tags,
+                    session_id=master_session.id,
+                    agent=v.agent,
+                    compliance_level=v.compliance_level,
+                    category=v.category,
+                    severity_matrix=v.severity_matrix,
+                    url=v.url
+                )
+                master_violations.append(v_copy)
+            
+            # Persist master session and violations in SQLite
+            await self.audit_service.repository.save_session(master_session)
+            if master_violations:
+                await self.audit_service.repository.save_violations(master_violations)
+            if db_session:
+                await db_session.commit()
+            
+            # Use the database session from the repository and generate the reports
+            reporter = AuditReporter(self.audit_service.repository.db_session) 
+            await reporter.generate_summary_report(session_id=master_session.id)
+            self.logger.info(f"MASTER MISSION REPORT GENERATED for {start_url}")
+            
+            # Clear checkpoint on success
+            if self.checkpoint_callback:
+                try:
+                    await self.checkpoint_callback(None)
+                except Exception as cb_err:
+                    self.logger.warning(f"Failed to clear checkpoint callback: {cb_err}")
+            
+            # AUDIT SUMMARY
+            duration = datetime.now() - start_time
+            
+            self.logger.info(f"Discovery Complete for {start_url}")
+            self.logger.info(f"Target Pages Screened: {self.discovered_count}")
+            self.logger.info(f"Successful Audits: {self.success_count}")
+            self.logger.info(f"Audit Failures: {self.failed_count}")
+            self.logger.info(f"Total Audit Duration: {duration}")
+            return master_session
+            
+        finally:
+            if shared_engine:
+                try:
+                    await shared_engine.teardown()
+                except Exception as e:
+                    self.logger.warning(f"Shared browser engine teardown warning: {e}")
+                self.audit_service.engine = None
+
+    async def _update_adaptive_throttling(self, latency: float, failed: bool = False):
+        """
+        Dynamically adjusts concurrency and politeness delays based on server response latency 
+        and failure feedback to evade WAFs and protect destination server health.
+        """
+        async with self._adaptive_lock:
+            self._latency_history.append(latency)
+            if len(self._latency_history) > 10:
+                self._latency_history.pop(0)
+                
+            avg_latency = sum(self._latency_history) / len(self._latency_history)
+            
+            if failed or avg_latency > 3.0:
+                new_concurrency = max(1, self._active_concurrency - 1)
+                new_delay = min(5.0, self._adaptive_delay + 1.0)
+                if new_concurrency != self._active_concurrency or new_delay != self._adaptive_delay:
+                    self.logger.warning(
+                        f"Adaptive Throttling Triggered (Avg Latency: {avg_latency:.2f}s, Failed: {failed}). "
+                        f"Throttling concurrency: {self._active_concurrency} -> {new_concurrency}, "
+                        f"Delay: {self._adaptive_delay:.2f}s -> {new_delay:.2f}s"
+                    )
+                    self._active_concurrency = new_concurrency
+                    self._adaptive_delay = new_delay
+                    self._semaphore = asyncio.Semaphore(self._active_concurrency)
+            elif avg_latency < 1.5 and self._active_concurrency < self.concurrency:
+                new_concurrency = min(self.concurrency, self._active_concurrency + 1)
+                new_delay = max(0.0, self._adaptive_delay - 0.5)
+                self.logger.info(
+                    f"Server response healthy (Avg Latency: {avg_latency:.2f}s). "
+                    f"Scaling concurrency: {self._active_concurrency} -> {new_concurrency}, "
+                    f"Delay: {self._adaptive_delay:.2f}s -> {new_delay:.2f}s"
+                )
+                self._active_concurrency = new_concurrency
+                self._adaptive_delay = new_delay
+                self._semaphore = asyncio.Semaphore(self._active_concurrency)
+
+    async def _process_audit_session(self, url: str, depth: int, queue: asyncio.PriorityQueue, master_session_id: Any):
         """Coordinates a single-page audit and recursive link extraction."""
+        import time
         async with self._semaphore:
+            # Dynamic Pause Check
+            db_session = getattr(self.audit_service.repository, "db_session", None)
+            if db_session and hasattr(self, "start_url"):
+                try:
+                    from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
+                    from auditor.domain.models import DomainStatus
+                    repository = SqlAlchemyTargetRepository(db_session)
+                    db_domain = await repository.get_domain_by_url(self.start_url)
+                    if db_domain and db_domain.status == DomainStatus.PAUSED:
+                        self.logger.info(f"Gracefully aborting crawl: target {self.start_url} has been PAUSED.")
+                        # Empty priority queue to prevent further execution
+                        while not queue.empty():
+                            try: queue.get_nowait()
+                            except asyncio.QueueEmpty: break
+                        return None
+                except Exception as db_err:
+                    self.logger.warning(f"Error checking target pause status: {db_err}")
             # Load settings dynamically to get the current politeness delay
             import json
             settings = {}
@@ -214,16 +413,23 @@ class CrawlService:
                 pass
 
             politeness_delay = self.politeness_delay if hasattr(self, 'politeness_delay') else settings.get("politeness_delay", 250)
-            if politeness_delay > 0:
-                self.logger.info(f"Applying politeness delay: sleeping {politeness_delay}ms...")
-                await asyncio.sleep(politeness_delay / 1000.0)
+            combined_delay = (politeness_delay / 1000.0) + self._adaptive_delay
+            if combined_delay > 0:
+                self.logger.info(f"Applying combined politeness delay: sleeping {combined_delay:.2f}s...")
+                await asyncio.sleep(combined_delay)
 
             self.logger.info(f"[{self.discovered_count}/{self.max_pages}] Audit Process Active: {url}")
             
+            start_audit = time.time()
             try:
                 # 1. SCANNING PHASE
                 session = await self.audit_service.execute_audit(url, config=self.config)
+                audit_duration = time.time() - start_audit
                 self.success_count += 1
+                self.completed_session_ids.append(str(session.id))
+                
+                # Feedback loop: success, update throttling with positive metrics
+                await self._update_adaptive_throttling(audit_duration, failed=False)
                 
                 # 2. DISCOVERY PHASE (Only if within session bounds)
                 if depth < self.max_depth and self.discovered_count < self.max_pages:
@@ -249,18 +455,43 @@ class CrawlService:
                         url_hash = hash(normalized)
                         if url_hash not in self.visited_url_hashes and self._is_internal(start_url=url, target_url=normalized):
                             self.visited_url_hashes.add(url_hash)
+                            self.visited_urls.add(normalized)
                             # Depth-based priority calculation
                             new_priority = (depth + 1) * 10
                             await queue.put((new_priority, normalized, depth + 1))
                             self.logger.debug(f"Page Discovered: {normalized} (Priority: {new_priority})")
 
+                # 3. CHECKPOINT PHASE
+                if self.checkpoint_callback:
+                    pending_list = []
+                    for p, u, d in queue._queue: # type: ignore
+                        pending_list.append({"priority": p, "url": u, "depth": d})
+                    checkpoint_data = {
+                        "master_session_id": str(master_session_id),
+                        "visited_urls": list(self.visited_urls),
+                        "pending_queue": pending_list,
+                        "success_count": self.success_count,
+                        "failed_count": self.failed_count,
+                        "completed_session_ids": self.completed_session_ids
+                    }
+                    try:
+                        await self.checkpoint_callback(checkpoint_data)
+                    except Exception as cb_err:
+                        self.logger.warning(f"Failed to execute checkpoint callback: {cb_err}")
+
             except AuditFailedError as e:
+                audit_duration = time.time() - start_audit
                 self.logger.warning(f"Auditor reported audit failure for {url}: {e}")
                 self.failed_count += 1
+                # Feedback loop: fail, update throttling with failure metric
+                await self._update_adaptive_throttling(audit_duration, failed=True)
                 return None
             except Exception as e:
+                audit_duration = time.time() - start_audit
                 self.logger.exception(f"Critical anomaly during scan of {url}")
                 self.failed_count += 1
+                # Feedback loop: fail, update throttling with failure metric
+                await self._update_adaptive_throttling(audit_duration, failed=True)
                 return None
             
             return session
@@ -278,8 +509,8 @@ class CrawlService:
         """Determines if a target is within the audit domain boundary."""
         if not self.skip_external:
             return True
-        start_netloc = urlparse(start_url).netloc
-        target_netloc = urlparse(target_url).netloc
+        start_netloc = urlparse(start_url).netloc.lower().replace("www.", "")
+        target_netloc = urlparse(target_url).netloc.lower().replace("www.", "")
         return start_netloc == target_netloc
 
     def _is_asset_filtered(self, url: str) -> bool:

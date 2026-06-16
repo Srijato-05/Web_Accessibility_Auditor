@@ -1,7 +1,9 @@
 class AuditorException(Exception):
     """Base exception for the Auditor Platform."""
-    pass
-
+    def __init__(self, message: str, context: dict = None):
+        super().__init__(f"{message} | Context: {context}" if context else message)
+        self.message = message
+        self.context = context
 class EngineError(AuditorException):
     """Raised when the Browser Engine fails an operation."""
     pass
@@ -24,4 +26,16 @@ class BatchError(AuditorException):
 
 class DomainBlockedError(NavigationError):
     """Raised when the target domain detects and blocks the scanner."""
+    pass
+
+class ExtractionError(AuditorException):
+    pass
+
+class EvaluationError(AuditorException):
+    pass
+
+class InvalidTargetError(AuditorException):
+    pass
+
+class AuthenticationError(AuditorException):
     pass

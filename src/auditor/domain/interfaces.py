@@ -7,7 +7,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from abc import ABC, abstractmethod
-from typing import List, Protocol, runtime_checkable
+from typing import List, Protocol, runtime_checkable, Optional
 from uuid import UUID
 from auditor.domain.audit_session import AuditSession # type: ignore
 from auditor.domain.violation import Violation # type: ignore
@@ -48,5 +48,5 @@ class IAuditRepository(ABC):
     async def save_violations(self, violations: List[Violation]) -> None:
         pass
     @abstractmethod
-    async def list_recent_sessions(self, limit: int) -> List[AuditSession]:
+    async def list_recent_sessions(self, limit: Optional[int] = None) -> List[AuditSession]:
         return []

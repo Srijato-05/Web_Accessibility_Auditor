@@ -548,6 +548,400 @@ def test_api_get_violation_endpoint():
         assert data["rule_id"] == "color-contrast"
         assert "fix" in data
 
+@pytest.mark.asyncio
+async def test_api_cleanup_orphaned_targets():
+    from auditor.presentation.api import cleanup_orphaned_targets
+    from auditor.domain.models import DomainStatus
+    
+    mock_domain = MagicMock()
+    mock_domain.status = DomainStatus.CRAWLING
+    
+    mock_repo = AsyncMock()
+    mock_repo.get_all_domains.return_value = [mock_domain]
+    
+    mock_db = AsyncMock()
+    
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db
+        
+        await cleanup_orphaned_targets()
+        
+        status_val = mock_domain.status.value if hasattr(mock_domain.status, 'value') else str(mock_domain.status)
+        assert status_val == "failed" or mock_domain.status == DomainStatus.FAILED
+        assert mock_repo.update_domain.called
+        assert mock_db.commit.called
+
+    # Test exception handling
+    mock_repo.get_all_domains.side_effect = Exception("DB error")
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db
+        await cleanup_orphaned_targets() # Should not raise exception
+
+@pytest.mark.asyncio
+async def test_api_run_audit_worker_pdf_generation_fails():
+    from auditor.presentation.api import async_run_audit_worker
+    
+    mock_session = MagicMock()
+    mock_session.status.value = "completed"
+    mock_session.id = uuid.uuid4()
+    
+    mock_repo = AsyncMock()
+    mock_repo.execute_audit = AsyncMock(return_value=mock_session)
+    
+    mock_db_session = AsyncMock()
+    
+    # Reporter raises error
+    with patch("auditor.presentation.api.AsyncSession") as mock_sess_cls, \
+         patch("auditor.presentation.api.SqlAlchemyAuditRepository"), \
+         patch("auditor.presentation.api.AuditService", return_value=mock_repo), \
+         patch("auditor.application.reporter.AuditReporter.generate_summary_report", side_effect=Exception("PDF error")), \
+         patch("logging.getLogger") as mock_log:
+        
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db_session
+        await async_run_audit_worker("http://google.com")
+        mock_log.return_value.error.assert_called()
+
+def test_api_start_audit_proactor_diagnostics():
+    import inspect
+    import asyncio
+    original_get_running_loop = asyncio.get_running_loop
+    
+    def mock_get_running_loop():
+        frame = inspect.currentframe()
+        try:
+            while frame:
+                if frame.f_code.co_name == "start_audit":
+                    mock_loop = MagicMock()
+                    mock_loop.__class__.__name__ = "SelectorEventLoop"
+                    return mock_loop
+                frame = frame.f_back
+        finally:
+            del frame
+        return original_get_running_loop()
+
+    with patch("sys.platform", "win32"), \
+         patch("asyncio.get_running_loop", side_effect=mock_get_running_loop), \
+         patch("auditor.presentation.api.is_safe_url", return_value=True), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls, \
+         patch("logging.getLogger") as mock_log:
+         
+        mock_db = AsyncMock()
+        mock_begin_ctx = AsyncMock()
+        mock_db.begin = MagicMock(return_value=mock_begin_ctx)
+        
+        mock_db_context = AsyncMock()
+        mock_db_context.__aenter__.return_value = mock_db
+        mock_sess_cls.return_value = mock_db_context
+        
+        response = client.post("/api/audit", json={"url": "http://direct.com"})
+        assert response.status_code == 200
+        mock_log.return_value.critical.assert_called()
+
+def test_api_verify_violation_endpoint():
+    # Invalid verification status
+    response = client.patch(f"/api/violations/{uuid.uuid4()}/verify", json={"status": "invalid"})
+    assert response.status_code == 400
+    
+    # Violation not found
+    mock_exec = MagicMock()
+    mock_exec.first.return_value = None
+    mock_db_sess = AsyncMock()
+    mock_db_sess.exec.return_value = mock_exec
+    
+    with patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db_sess
+        response = client.patch(f"/api/violations/{uuid.uuid4()}/verify", json={"status": "true_positive"})
+        assert response.status_code == 404
+        
+    # Success path
+    mock_viol = MagicMock()
+    mock_exec.first.return_value = mock_viol
+    with patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db_sess
+        v_id = uuid.uuid4()
+        response = client.patch(f"/api/violations/{v_id}/verify", json={"status": "true_positive"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+def test_api_get_targets():
+    mock_domain = MagicMock()
+    mock_domain.id = uuid.uuid4()
+    mock_domain.url = "http://target.com"
+    mock_domain.status.value = "active"
+    mock_domain.created_at = None
+    mock_domain.last_audit_at = None
+    mock_domain.frequency_hours = 24
+    mock_domain.priority = 3
+    mock_domain.retry_count = 0
+    mock_domain.last_error = None
+    mock_domain.scan_profile = {}
+    
+    mock_repo = AsyncMock()
+    mock_repo.get_all_domains.return_value = [mock_domain]
+    
+    mock_exec = MagicMock()
+    mock_session_model = MagicMock()
+    mock_session_model.id = uuid.uuid4()
+    mock_exec.first.return_value = mock_session_model
+    
+    mock_db = AsyncMock()
+    mock_db.exec.return_value = mock_exec
+    
+    with patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = mock_db
+        response = client.get("/api/targets")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["last_session_id"] == str(mock_session_model.id)
+
+def test_api_get_target_diff():
+    mock_diff = AsyncMock(return_value={"diff": "details"})
+    with patch("auditor.application.diff_service.AuditDiffService.calculate_diff_by_target", mock_diff):
+        response = client.get("/api/targets/diff?url=http://target.com")
+        assert response.status_code == 200
+        assert response.json() == {"diff": "details"}
+
+def test_api_create_target_already_exists():
+    mock_domain = MagicMock()
+    mock_domain.id = uuid.uuid4()
+    mock_repo = AsyncMock()
+    mock_repo.get_domain_by_url.return_value = mock_domain
+    
+    with patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets", json={"url": "http://target.com"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "already_exists"
+
+def test_api_update_target_not_found():
+    mock_repo = AsyncMock()
+    mock_repo.get_domain_by_url.return_value = None
+    
+    with patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/update", json={"url": "http://target.com"})
+        assert response.status_code == 404
+
+def test_api_prune_targets():
+    mock_domain = MagicMock()
+    mock_domain.url = "http://target.com"
+    from auditor.domain.models import DomainStatus
+    mock_domain.status = DomainStatus.FAILED
+    
+    mock_domain2 = MagicMock()
+    mock_domain2.url = "http://target2.com"
+    mock_domain2.status = DomainStatus.ACTIVE
+    
+    mock_repo = AsyncMock()
+    mock_repo.get_all_domains.return_value = [mock_domain, mock_domain2]
+    
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/prune")
+        assert response.status_code == 200
+        assert response.json()["pruned_count"] == 1
+
+def test_api_toggle_target():
+    # Case target not found
+    mock_repo = AsyncMock()
+    mock_repo.get_domain_by_url.return_value = None
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/toggle", json={"url": "http://target.com"})
+        assert response.status_code == 404
+
+    # Case active -> paused
+    mock_domain = MagicMock()
+    from auditor.domain.models import DomainStatus
+    mock_domain.status = DomainStatus.ACTIVE
+    mock_repo.get_domain_by_url.return_value = mock_domain
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/toggle", json={"url": "http://target.com"})
+        assert response.json()["new_status"] == "paused"
+
+    # Case paused -> active
+    mock_domain.status = DomainStatus.PAUSED
+    mock_repo.get_domain_by_url.return_value = mock_domain
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/toggle", json={"url": "http://target.com"})
+        assert response.json()["new_status"] == "active"
+
+def test_api_delete_target():
+    mock_repo = AsyncMock()
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.delete("/api/targets?url=http://target.com")
+        assert response.json()["status"] == "success"
+
+@pytest.mark.asyncio
+async def test_api_async_run_discovery():
+    from auditor.presentation.api import async_run_discovery
+    
+    mock_discovery = AsyncMock()
+    mock_discovery.run_discovery_session = AsyncMock()
+    
+    with patch("auditor.infrastructure.link_extractor.PlaywrightLinkExtractor") as mock_ext, \
+         patch("auditor.domain.crawler.LinkDiscoveryService"), \
+         patch("auditor.application.discovery_service.DiscoveryService", return_value=mock_discovery), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+         
+        mock_ext.return_value.teardown = AsyncMock()
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        await async_run_discovery("http://target.com")
+        assert mock_discovery.run_discovery_session.called
+
+    # Test error handling path
+    mock_discovery.run_discovery_session.side_effect = Exception("Discovery failed")
+    with patch("auditor.infrastructure.link_extractor.PlaywrightLinkExtractor") as mock_ext, \
+         patch("auditor.domain.crawler.LinkDiscoveryService"), \
+         patch("auditor.application.discovery_service.DiscoveryService", return_value=mock_discovery), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls, \
+         patch("logging.getLogger") as mock_log:
+          
+        mock_ext.return_value.teardown = AsyncMock()
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        await async_run_discovery("http://target.com")
+        assert mock_log.return_value.error.called
+
+def test_api_discover_targets_endpoint():
+    with patch("auditor.presentation.api.is_safe_url", return_value=True), \
+         patch("auditor.presentation.api.async_run_discovery") as mock_bg:
+        response = client.post("/api/targets/discover", json={"url": "http://target.com"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "started"
+
+def test_api_batch_status():
+    mock_manager = MagicMock()
+    mock_manager.get_system_health_report = AsyncMock(return_value={"status": "healthy"})
+    
+    with patch("auditor.application.batch_service.BatchAuditManager", return_value=mock_manager):
+        response = client.get("/api/batch/status")
+        assert response.status_code == 200
+        assert "cpu_percent" in response.json()
+
+def test_api_batch_exports():
+    # export_batch_csv success
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_aggregated_csv", AsyncMock(return_value="/exports/batch.csv")), \
+         patch("os.path.exists", return_value=True), \
+         patch("auditor.presentation.api.FileResponse") as mock_file:
+        response = client.get("/api/batch/export/csv")
+        assert response.status_code == 200
+        
+    # export_violations_csv success
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_detailed_violations_csv", AsyncMock(return_value="/exports/violations.csv")), \
+         patch("os.path.exists", return_value=True), \
+         patch("auditor.presentation.api.FileResponse") as mock_file:
+        response = client.get("/api/batch/export/violations/csv")
+        assert response.status_code == 200
+
+def test_api_ensure_directories_permission_error():
+    from auditor.presentation.api import ensure_directories
+    with patch("os.makedirs", side_effect=PermissionError("Permission denied")), \
+         pytest.raises(PermissionError):
+        ensure_directories()
+
+def test_api_ensure_directories_success():
+    from auditor.presentation.api import ensure_directories
+    with patch("os.makedirs") as mock_makedirs:
+        ensure_directories()
+        assert mock_makedirs.called
+
+def test_api_update_target_success():
+    mock_domain = MagicMock()
+    mock_repo = AsyncMock()
+    mock_repo.get_domain_by_url.return_value = mock_domain
+    
+    with patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.presentation.api.AsyncSession") as mock_sess_cls:
+        mock_sess_cls.return_value.__aenter__.return_value = AsyncMock()
+        response = client.post("/api/targets/update", json={
+            "url": "http://target.com",
+            "priority": 1,
+            "frequency_hours": 12,
+            "scan_profile": {"custom": True}
+        })
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        assert mock_domain.priority == 1
+        assert mock_domain.frequency_hours == 12
+        assert mock_domain.scan_profile == {"custom": True}
+
+def test_api_batch_exports_failures():
+    # export_batch_csv failure
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_aggregated_csv", AsyncMock(return_value=None)):
+        response = client.get("/api/batch/export/csv")
+        assert response.status_code == 500
+        assert "Failed to compile" in response.json()["detail"]
+        
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_aggregated_csv", AsyncMock(return_value="/nonexistent/path.csv")), \
+         patch("os.path.exists", return_value=False):
+        response = client.get("/api/batch/export/csv")
+        assert response.status_code == 500
+
+    # export_violations_csv failure
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_detailed_violations_csv", AsyncMock(return_value=None)):
+        response = client.get("/api/batch/export/violations/csv")
+        assert response.status_code == 500
+        assert "Failed to compile" in response.json()["detail"]
+
+    with patch("auditor.application.batch_exporter.BatchReportExporter.generate_detailed_violations_csv", AsyncMock(return_value="/nonexistent/path.csv")), \
+         patch("os.path.exists", return_value=False):
+        response = client.get("/api/batch/export/violations/csv")
+        assert response.status_code == 500
+
+def test_api_run_batch_audit_background():
+    with patch("auditor.presentation.api.async_run_batch_audit_manager") as mock_bg:
+        response = client.post("/api/batch/run", json={"use_queue": False})
+        assert response.status_code == 200
+        assert response.json()["status"] == "started"
+
+def test_api_batch_status_error():
+    mock_manager = MagicMock()
+    mock_manager.get_system_health_report.side_effect = Exception("System status retrieval failed")
+    with patch("auditor.application.batch_service.BatchAuditManager", return_value=mock_manager):
+        response = client.get("/api/batch/status")
+        assert response.status_code == 500
+        assert "System status retrieval failed" in response.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_api_async_run_batch_audit_manager():
+    from auditor.presentation.api import async_run_batch_audit_manager
+    mock_manager = MagicMock()
+    mock_manager.run_batch_audit = AsyncMock()
+    
+    with patch("auditor.application.batch_service.BatchAuditManager", return_value=mock_manager):
+        await async_run_batch_audit_manager()
+        assert mock_manager.run_batch_audit.called
+
+    # Error path
+    mock_manager.run_batch_audit.side_effect = Exception("Batch audit failure")
+    with patch("auditor.application.batch_service.BatchAuditManager", return_value=mock_manager), \
+         patch("logging.getLogger") as mock_log:
+        await async_run_batch_audit_manager()
+        assert mock_log.return_value.error.called
+
+
 
 
 

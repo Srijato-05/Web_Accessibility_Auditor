@@ -197,6 +197,8 @@ class AuditService:
                 engine = self.engine
                 if hasattr(engine, 'config'):
                     setattr(engine, 'config', config or {})
+                # Crucial alignment: Update engine's session_id to current sub-session ID
+                engine.session_id = session.id
             else:
                 engine = PlaywrightEngine(session.id, config=config)
             

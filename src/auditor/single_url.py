@@ -63,28 +63,31 @@ Options:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-    # 2. DDD Component Lifecycle
-    async with AsyncSession(engine) as db_session:
-        repository = SqlAlchemyAuditRepository(db_session)
-        # Note: AuditService does not take reports_dir in this version's constructor
-        service = AuditService(None, repository)
-        
-        try:
-            result = await service.execute_audit(url, skip_neural=skip_neural)
-            auditor_logger.info(f"Audit Session {result.id} COMPLETE. Status: {result.status.value}")
-
-            # 3. Generate Stakeholder Report (including Agentic Advice)
-            reports_out = os.path.join(REPORTS_DIR, "exports")
-            reporter = AuditReporter(db_session)
-            report_paths = await reporter.generate_summary_report()
-            auditor_logger.info(f"Stakeholder Dashboard Generated: {report_paths.get('html', 'N/A')}")
+        # 2. DDD Component Lifecycle
+        async with AsyncSession(engine) as db_session:
+            repository = SqlAlchemyAuditRepository(db_session)
+            # Note: AuditService does not take reports_dir in this version's constructor
+            service = AuditService(None, repository)
             
-            return result.id
-        except Exception as e:
-            auditor_logger.critical(f"FATAL: Audit protocol aborted for {url}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+            try:
+                result = await service.execute_audit(url, skip_neural=skip_neural)
+                auditor_logger.info(f"Audit Session {result.id} COMPLETE. Status: {result.status.value}")
+
+                # 3. Generate Stakeholder Report (including Agentic Advice)
+                reports_out = os.path.join(REPORTS_DIR, "exports")
+                reporter = AuditReporter(db_session)
+                report_paths = await reporter.generate_summary_report()
+                auditor_logger.info(f"Stakeholder Dashboard Generated: {report_paths.get('html', 'N/A')}")
+                
+                return result.id
+            except Exception as e:
+                auditor_logger.critical(f"FATAL: Audit protocol aborted for {url}: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+    except Exception as e:
+        auditor_logger.error(f"Execution Failed: {e}")
+        return None
     finally:
         if 'engine' in locals():
             await engine.dispose()
@@ -101,13 +104,15 @@ if __name__ == "__main__":
             
             reports_out = str(EXPORTS_DIR)
             
-            # Match patterns
-            combined_pattern = os.path.join(reports_out, f"audit_report_{str(session_id)[:8]}_*.json")
+            combined_pattern = os.path.join(reports_out, f"audit_report_*_{str(session_id)[:8]}_*.json")
             findings_pattern = os.path.join(reports_out, f"agent_findings_{str(session_id)[:8]}_*.json") # type: ignore
             domain = urlparse(url).netloc.replace("www.", "")
             findings_pattern_url = os.path.join(reports_out, f"{domain}_*.json")
             
             combined_matches = glob.glob(combined_pattern)
+            if not combined_matches:
+                combined_pattern_old = os.path.join(reports_out, f"audit_report_{str(session_id)[:8]}_*.json")
+                combined_matches = glob.glob(combined_pattern_old)
             if combined_matches:
                 latest_json = max(combined_matches, key=os.path.getctime)
                 out_pdf = latest_json.replace(".json", ".pdf")

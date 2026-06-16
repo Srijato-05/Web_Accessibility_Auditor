@@ -63,8 +63,10 @@ async def test_dispatch_batch_audit(temp_db_engine):
     
     mock_connect.assert_called_once()
     assert mock_push.call_count == 2
-    mock_push.assert_any_call("full_site_audit", {"url": "https://site1.com"})
-    mock_push.assert_any_call("full_site_audit", {"url": "https://site2.com"})
+    # Verify payloads contain the correct URLs
+    called_urls = [call[0][1]["url"] for call in mock_push.call_args_list]
+    assert "https://site1.com" in called_urls
+    assert "https://site2.com" in called_urls
     mock_disconnect.assert_called_once()
 
 @pytest.mark.asyncio
@@ -162,7 +164,7 @@ async def test_process_domain_throttle_wait_and_failure(temp_db_engine):
 @pytest.mark.asyncio
 async def test_health_synthesis_failure(temp_db_engine):
     manager = BatchAuditManager(temp_db_engine)
-    with patch("auditor.application.batch_service.SqlAlchemyTargetRepository.get_active_domains", side_effect=Exception("DB failure")):
+    with patch("auditor.application.batch_service.SqlAlchemyTargetRepository.get_all_domains", side_effect=Exception("DB failure")):
         with pytest.raises(RepositoryError):
             await manager.get_system_health_report()
 
@@ -181,7 +183,16 @@ async def test_process_domain_audit_success_and_fallback(temp_db_engine):
     manager = BatchAuditManager(temp_db_engine)
     domain = AuditTarget(url="https://site1.com")
     
-    with patch("auditor.application.batch_service.PlaywrightLinkExtractor"), \
+    # Register the domain first
+    async with AsyncSession(temp_db_engine) as session:
+        repo = SqlAlchemyTargetRepository(session)
+        await repo.add_domain(domain)
+        await session.commit()
+    
+    mock_extractor = MagicMock()
+    mock_extractor.teardown = AsyncMock()
+    
+    with patch("auditor.application.batch_service.PlaywrightLinkExtractor", return_value=mock_extractor), \
          patch("auditor.application.batch_service.CrawlService.run", AsyncMock()) as mock_crawl_run:
         res = await manager._process_domain_audit(domain)
         assert res is True

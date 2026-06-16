@@ -107,6 +107,7 @@ class ComplianceMapper:
         'Below A' represents critical mission-blocking failures of Level A criteria.
         """
         tags_lower = [str(t).lower() for t in tags]
+        normalized_tags = [t.replace("-", "") for t in tags_lower]
         val = impact.value if hasattr(impact, 'value') else str(impact).lower()
         
         # 1. Parse WCAG criterion from tags if present (e.g. "1.3.5" or "wcag-1.3.5")
@@ -131,14 +132,14 @@ class ComplianceMapper:
                             return "Below A"
                         return lvl
 
-        # 2. Fallback to standard suffix checking
-        is_level_a = any("wcag2a" in t or "wcag21a" in t for t in tags_lower)
+        # 2. Fallback to standard suffix checking (using exact word match for safety)
+        is_level_a = any(t in ("wcag2a", "wcag21a", "wcag22a") for t in normalized_tags)
         if is_level_a and val == "critical":
             return "Below A"
             
-        if any("wcag2aaa" in t or "wcag21aaa" in t for t in tags_lower):
+        if any(t in ("wcag2aaa", "wcag21aaa", "wcag22aaa") for t in normalized_tags):
             return "AAA"
-        if any("wcag2aa" in t or "wcag21aa" in t or "wcag22aa" in t for t in tags_lower):
+        if any(t in ("wcag2aa", "wcag21aa", "wcag22aa") for t in normalized_tags):
             return "AA"
         if is_level_a:
             return "A"
@@ -153,7 +154,7 @@ class ComplianceMapper:
         # Compile compilation-cached regexes once on the class for high efficiency
         if not hasattr(cls, "_conformance_pat"):
             cls._conformance_pat = re.compile(r'^wcag\d*[a]+$')
-            cls._dotted_pat = re.compile(r'\b([1-4])\.\d+(?:\.\d+)*\b')
+            cls._dotted_pat = re.compile(r'(?:^|[^0-9])([1-4])\.\d+(?:\.\d+)*')
             cls._wcag_digits_pat = re.compile(r'^wcag([1-4])(\d{2,3})$')
 
         tags_lower = [str(t).lower() for t in tags]
@@ -212,7 +213,7 @@ class ComplianceMapper:
         if agent_lower in cls.AGENT_CATEGORIES:
             return cls.AGENT_CATEGORIES[agent_lower]
             
-        return "Perceivable"
+        return "General Accessibility"
 
 
     @classmethod

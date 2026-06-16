@@ -22,5 +22,13 @@ class ITargetRepository(ABC):
         return []
 
     @abstractmethod
+    async def get_all_domains(self) -> List[AuditTarget]:
+        return []
+
+    @abstractmethod
     async def update_domain(self, domain: AuditTarget) -> None:
+        pass
+
+    @abstractmethod
+    async def delete_domain(self, url: str) -> None:
         pass

@@ -11,6 +11,7 @@ import Support from './pages/Support.tsx';
 import Sidebar from './components/Sidebar.tsx';
 import Audits from './pages/Audits.tsx';
 import Help from './pages/Help.tsx';
+import BatchAudit from './pages/BatchAudit.tsx';
 
 import { ThemeProvider } from './components/ThemeContext.tsx';
 
@@ -29,6 +30,7 @@ function App() {
                 <Route path="/" element={<ScanScreen />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/audits" element={<Audits />} />
+                <Route path="/batch" element={<BatchAudit />} />
                 <Route path="/insights/:audit_id" element={<Insights />} />
                 <Route path="/insights/:audit_id/violations/:violation_id" element={<IssueDetail />} />
                 <Route path="/audits/:audit_id/graph-insights" element={<GraphInsights />} />

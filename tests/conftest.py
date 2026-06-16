@@ -1,6 +1,9 @@
 import sys
 import os
 
+# Ensure local src directory has precedence over installed site-packages
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+
 # Normalize drive letters in sys.path to uppercase on Windows to avoid duplicate module loads
 if sys.platform == "win32":
     sys.path[:] = [p[0].upper() + p[1:] if p and len(p) >= 2 and p[1] == ':' else p for p in sys.path]

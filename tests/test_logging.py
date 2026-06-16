@@ -103,7 +103,7 @@ def test_setup_auditor_logging():
             
             assert new_logger.level == logging.DEBUG
             assert mock_makedirs.call_count >= 3
-            mock_fh.assert_called_once_with("reports/logs/auditor.log")
+            mock_fh.assert_called_once_with("reports/logs/auditor.log", encoding="utf-8")
             mock_sh.assert_called_once()
     finally:
         logger.handlers = orig_handlers

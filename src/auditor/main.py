@@ -21,7 +21,23 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Verify/Recover database and create a backup snapshot
+    try:
+        from auditor.infrastructure.backup_manager import DatabaseBackupManager
+        backup_mgr = DatabaseBackupManager()
+        # Verify and recover if corrupt or missing
+        backup_mgr.check_and_recover()
+        # Create a pre-run backup snapshot
+        backup_mgr.create_backup()
+    except Exception as e:
+        print(f"Error during startup backup diagnostics: {e}")
+
     await init_db()
+    try:
+        from auditor.presentation.api import cleanup_orphaned_targets
+        await cleanup_orphaned_targets()
+    except Exception as e:
+        print(f"Error during startup cleanup: {e}")
     yield
 
 app = FastAPI(title="Accessibility Auditor API", lifespan=lifespan)

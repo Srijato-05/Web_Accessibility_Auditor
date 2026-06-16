@@ -378,7 +378,8 @@ class Neo4jRepository:
             MERGE (d)-[:DOMAIN_OWNS_PAGE]->(s)
             MERGE (s)-[:PAGE_LINKS_TO]->(t)
             """
-            session.run(query, batch=batch)
+            with session.begin_transaction() as tx:
+                tx.run(query, batch=batch)
 
         try:
             self._run_with_retry(action)
@@ -397,10 +398,14 @@ class Neo4jRepository:
                     ),
                     timeout=15.0
                 )
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as err:
                 self.logger.warning("Neo4j API Timeout: Component batch upsert skipped.")
+                from auditor.domain.exceptions import RepositoryError
+                raise RepositoryError(f"Neo4j API Timeout: {err}")
             except Exception as e:
                 self.logger.exception("Async Component Batch Error")
+                from auditor.domain.exceptions import RepositoryError
+                raise RepositoryError(f"Async Component Batch Error: {e}")
 
     def _upsert_component_violations_batch_sync(self, batch: List[dict]):
         try:
@@ -444,8 +449,10 @@ class Neo4jRepository:
                 MERGE (c)-[:COMPONENT_TRIGGERS]->(v)
                 MERGE (v)-[:VIOLATION_FAILS]->(s)
                 """
-                session.run(query, batch=params)
+                with session.begin_transaction() as tx:
+                    tx.run(query, batch=params)
 
             self._run_with_retry(action)
         except Exception as e:
             self.logger.exception("Sync Component Batch Error")
+            raise

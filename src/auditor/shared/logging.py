@@ -47,6 +47,14 @@ class AuditorJSONFormatter(logging.Formatter):
 
 def setup_auditor_logging(level=logging.INFO):
     """Initializes the Auditor Logging stack."""
+    if not isinstance(level, int):
+        if isinstance(level, str):
+            try:
+                level = getattr(logging, level.upper())
+            except AttributeError:
+                level = logging.INFO
+        else:
+            level = logging.INFO
     logger = logging.getLogger("auditor")
     logger.setLevel(level)
 

@@ -25,9 +25,10 @@ async def test_agent_service_lazy_load_controller():
     assert srv.controller is controller
     
     # Assert standard agents loaded
-    assert len(controller.agents) == 3
+    assert len(controller.agents) == 4
     agent_names = [a.agent_name for a in controller.agents]
     assert "visual" in agent_names
     assert "motor" in agent_names
     assert "cognitive" in agent_names
+    assert "neural" in agent_names
 

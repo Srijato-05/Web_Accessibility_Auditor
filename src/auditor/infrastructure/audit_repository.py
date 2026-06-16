@@ -6,7 +6,7 @@ Role: Persistence of audit sessions and violations.
 This module implements the repository pattern for accessibility results.
 """
 
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 # IDE Pathing Resolution & Relative Import Resilience
@@ -134,6 +134,45 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self.logger.error(f"Database Retrieval Anomaly [Session {session_id}]: {e}")
             raise RepositoryError(f"Database retrieval failure: {e}")
 
+    def _sanitize_and_deduplicate_violations(self, violations: List[Violation]) -> List[Violation]:
+        """
+        Deduplicates and sanitizes a list of violations for a single session to ensure 
+        data collection integrity and prevent database bloat.
+        """
+        seen = set()
+        sanitized_list = []
+        
+        for v in violations:
+            # 1. Deduplication key (rule_id, selector, description, url)
+            key = (v.rule_id, v.selector, v.description, v.url)
+            if key in seen:
+                continue
+            seen.add(key)
+            
+            # 2. String truncation & control character sanitization
+            safe_selector = (v.selector or "")[:2000].replace("\x00", "")
+            safe_description = (v.description or "")[:4000].replace("\x00", "")
+            safe_help_url = (v.help_url or "")[:1000].replace("\x00", "")
+            safe_compliance = (v.compliance_level or "")[:100].replace("\x00", "")
+            safe_category = (v.category or "")[:200].replace("\x00", "")
+            
+            # 3. Sample nodes if too large (e.g., limit node list to 50 items to prevent database overflow)
+            safe_nodes = v.nodes or []
+            if isinstance(safe_nodes, list) and len(safe_nodes) > 50:
+                safe_nodes = safe_nodes[:50]
+                
+            # Create a clean sanitized version of the violation
+            v.selector = safe_selector
+            v.description = safe_description
+            v.help_url = safe_help_url
+            v.compliance_level = safe_compliance
+            v.category = safe_category
+            v.nodes = safe_nodes
+            
+            sanitized_list.append(v)
+            
+        return sanitized_list
+
     async def save_violations(self, violations: List[Violation]) -> None:
         """Atomic mass-commitment of violations to the database."""
         if not violations:
@@ -144,11 +183,14 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             await self._ensure_schema_integrity()
             self._schema_verified = True
 
-        self.logger.info(f"Executing Batch Violation Commit for {len(violations)} records...")
+        # Apply sanitation and deduplication
+        sanitized_violations = self._sanitize_and_deduplicate_violations(violations)
+        
+        self.logger.info(f"Executing Batch Violation Commit for {len(sanitized_violations)} records (filtered from {len(violations)})...")
         
         try:
             async with self._lock:
-                for v in violations:
+                for v in sanitized_violations:
                     model = ViolationModel(
                         rule_id=v.rule_id,
                         session_id=v.session_id,
@@ -175,7 +217,7 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             self.logger.error(f"BATCH COMMIT FAILURE: {e}")
             raise RepositoryError(f"Mass persistence failure: {e}")
 
-    async def list_recent_sessions(self, limit: int) -> List[AuditSession]:
+    async def list_recent_sessions(self, limit: Optional[int] = None) -> List[AuditSession]:
         """Aggregates the most recent audit sessions from the ledger."""
         # Defensive Schema Alignment
         if not self._schema_verified:
@@ -184,7 +226,9 @@ class SqlAlchemyAuditRepository(IAuditRepository):
             
         try:
             self.db_session.expire_all()
-            stmt = select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()).limit(limit).options(selectinload(AuditSessionModel.violations))
+            stmt = select(AuditSessionModel).order_by(AuditSessionModel.created_at.desc()).options(selectinload(AuditSessionModel.violations))
+            if limit is not None:
+                stmt = stmt.limit(limit)
             result = await self.db_session.exec(stmt)
             models = result.all()
             

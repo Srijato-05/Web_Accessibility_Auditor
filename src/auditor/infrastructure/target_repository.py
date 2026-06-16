@@ -44,7 +44,11 @@ class SqlAlchemyTargetRepository(ITargetRepository):
                     status=domain.status.value if hasattr(domain.status, "value") else str(domain.status),
                     created_at=domain.created_at,
                     last_audit_at=domain.last_audit_at,
-                    frequency_hours=domain.frequency_hours
+                    frequency_hours={"hours": domain.frequency_hours},
+                    priority=domain.priority,
+                    retry_count=domain.retry_count,
+                    last_error=domain.last_error,
+                    scan_profile=domain.scan_profile
                 )
                 await self.db_session.merge(model)
                 await self.db_session.commit()
@@ -70,7 +74,11 @@ class SqlAlchemyTargetRepository(ITargetRepository):
                     status=DomainStatus(m.status) if isinstance(m.status, str) else m.status,
                     created_at=m.created_at,
                     last_audit_at=m.last_audit_at,
-                    frequency_hours=m.frequency_hours
+                    frequency_hours=m.frequency_hours.get("hours", 24) if isinstance(m.frequency_hours, dict) else 24,
+                    priority=m.priority if m.priority is not None else 3,
+                    retry_count=m.retry_count if m.retry_count is not None else 0,
+                    last_error=m.last_error,
+                    scan_profile=m.scan_profile if isinstance(m.scan_profile, dict) else {}
                 ) for m in model_instances
             ]
         except Exception as e:
@@ -81,6 +89,44 @@ class SqlAlchemyTargetRepository(ITargetRepository):
         """Updates the status and surveillance telemetry of a registered target."""
         # Using merge-based logic to ensure atomic updates
         await self.add_domain(domain)
+
+    async def get_all_domains(self) -> List[AuditTarget]:
+        """Aggregates all registered targets regardless of status."""
+        try:
+            self.logger.debug("Executing Get All Domains Query...")
+            stmt = select(TargetModel)
+            result = await self.db_session.exec(stmt)
+            model_instances = result.all()
+            
+            return [
+                AuditTarget(
+                    id=m.id,
+                    url=m.url,
+                    status=DomainStatus(m.status) if isinstance(m.status, str) else m.status,
+                    created_at=m.created_at,
+                    last_audit_at=m.last_audit_at,
+                    frequency_hours=m.frequency_hours.get("hours", 24) if isinstance(m.frequency_hours, dict) else 24,
+                    priority=m.priority if m.priority is not None else 3,
+                    retry_count=m.retry_count if m.retry_count is not None else 0,
+                    last_error=m.last_error,
+                    scan_profile=m.scan_profile if isinstance(m.scan_profile, dict) else {}
+                ) for m in model_instances
+            ]
+        except Exception as e:
+            self.logger.error(f"Registry Get All Query Failure: {e}")
+            raise RepositoryError(f"Batch registry retrieval failure: {e}")
+
+    async def delete_domain(self, url: str) -> None:
+        """Removes a target from the repository registry."""
+        try:
+            async with self._lock:
+                stmt = delete(TargetModel).where(TargetModel.url == url)
+                await self.db_session.exec(stmt)
+                await self.db_session.commit()
+            self.logger.info(f"Target Deregistered: {url}")
+        except Exception as e:
+            self.logger.error(f"Registry Delete Failure for {url}: {e}")
+            raise RepositoryError(f"Batch registry deletion failure: {e}")
 
     async def get_domain_by_url(self, url: str) -> Optional[AuditTarget]:
         """Retrieves a target from the repository by its unique URL."""
@@ -98,7 +144,11 @@ class SqlAlchemyTargetRepository(ITargetRepository):
                 status=DomainStatus(model_inst.status) if isinstance(model_inst.status, str) else model_inst.status,
                 created_at=model_inst.created_at,
                 last_audit_at=model_inst.last_audit_at,
-                frequency_hours=model_inst.frequency_hours
+                frequency_hours=model_inst.frequency_hours.get("hours", 24) if isinstance(model_inst.frequency_hours, dict) else 24,
+                priority=model_inst.priority if model_inst.priority is not None else 3,
+                retry_count=model_inst.retry_count if model_inst.retry_count is not None else 0,
+                last_error=model_inst.last_error,
+                scan_profile=model_inst.scan_profile if isinstance(model_inst.scan_profile, dict) else {}
             )
         except Exception as e:
             self.logger.error(f"Repository Query Failure for URL {url}: {e}")

@@ -134,6 +134,14 @@ class MotorAgent(IAccessibilityAgent):
                 el2 = valid_els[j]
                 b2 = el2.bounding_box
                 
+                # Targets that are at least 24x24px meet WCAG 2.5.8 requirements regardless of spacing
+                w1 = b1.get('width', 0)
+                h1 = b1.get('height', 0)
+                w2 = b2.get('width', 0)
+                h2 = b2.get('height', 0)
+                if w1 >= 24 and h1 >= 24 and w2 >= 24 and h2 >= 24:
+                    continue
+                
                 # Calculate Cartesian distance between bounding box edges
                 # If they overlap or have < 4px padding, it's a critical fat-finger risk
                 horizontal_dist = max(0, max(b1['x'] - (b2['x'] + b2['width']), b2['x'] - (b1['x'] + b1['width'])))

@@ -19,9 +19,11 @@ async def test_single_url_cli_help():
 async def test_single_url_cli_run():
     mock_execute = AsyncMock(return_value=MagicMock(id="session-123", status=MagicMock(value="completed")))
     mock_report = AsyncMock(return_value={"html": "report.html"})
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
     
     with patch("sys.argv", ["single_url.py", "https://target.com", "--no-neural"]), \
-         patch("auditor.single_url.create_async_engine"), \
+         patch("auditor.single_url.create_async_engine", return_value=mock_engine), \
          patch("auditor.single_url.SQLModel.metadata.create_all", AsyncMock()), \
          patch("auditor.single_url.AuditService.execute_audit", mock_execute), \
          patch("auditor.single_url.AuditReporter.generate_summary_report", mock_report):
@@ -33,8 +35,10 @@ async def test_single_url_cli_run():
 @pytest.mark.asyncio
 async def test_site_audit_cli_run():
     mock_crawl = AsyncMock()
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
     with patch("sys.argv", ["site_audit.py", "https://discover.com"]), \
-         patch("auditor.site_audit.create_async_engine"), \
+         patch("auditor.site_audit.create_async_engine", return_value=mock_engine), \
          patch("auditor.site_audit.SQLModel.metadata.create_all", AsyncMock()), \
          patch("auditor.site_audit.CrawlService.run", mock_crawl):
          
@@ -116,8 +120,10 @@ async def test_single_url_cli_missing_args():
 @pytest.mark.asyncio
 async def test_single_url_cli_exception():
     mock_execute = AsyncMock(side_effect=RuntimeError("Audit error"))
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
     with patch("sys.argv", ["single_url.py", "https://target.com"]), \
-         patch("auditor.single_url.create_async_engine"), \
+         patch("auditor.single_url.create_async_engine", return_value=mock_engine), \
          patch("auditor.single_url.SQLModel.metadata.create_all", AsyncMock()), \
          patch("auditor.single_url.AuditService.execute_audit", mock_execute), \
          patch("auditor.single_url.auditor_logger.critical") as mock_log, \
@@ -136,8 +142,10 @@ async def test_site_audit_cli_missing_args():
 @pytest.mark.asyncio
 async def test_site_audit_cli_exception():
     mock_crawl = AsyncMock(side_effect=RuntimeError("Crawl error"))
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
     with patch("sys.argv", ["site_audit.py", "https://discover.com"]), \
-         patch("auditor.site_audit.create_async_engine"), \
+         patch("auditor.site_audit.create_async_engine", return_value=mock_engine), \
          patch("auditor.site_audit.SQLModel.metadata.create_all", AsyncMock()), \
          patch("auditor.site_audit.CrawlService.run", mock_crawl), \
          patch("auditor.site_audit.auditor_logger.critical") as mock_log:
@@ -153,7 +161,7 @@ async def test_batch_audit_cli_add_target_exception():
          patch("auditor.batch_audit.AsyncSession", side_effect=RuntimeError("DB Error")), \
          patch("auditor.batch_audit.SQLModel.metadata.create_all", AsyncMock()), \
          patch("auditor.infrastructure.task_model.task_metadata.create_all", AsyncMock()), \
-         patch("auditor.batch_audit.auditor_logger.error") as mock_log:
+         patch("auditor.batch_audit.auditor_logger.critical") as mock_log:
         await batch_audit.main()
         mock_log.assert_called()
 

@@ -47,6 +47,9 @@ class VisualAgent(IAccessibilityAgent):
         findings.extend(self._analyze_typographical_density(page_data))
         findings.extend(self._analyze_color_detachment(page_data))
         findings.extend(self._analyze_dynamic_css_vectorization(page_data))
+        findings.extend(self._analyze_form_error_cues(page_data))
+        findings.extend(self._analyze_text_status_cues(page_data))
+        findings.extend(self._analyze_image_alternatives(page_data))
 
         return findings
 
@@ -257,4 +260,87 @@ class VisualAgent(IAccessibilityAgent):
                         session_id=str(page_data.session_id)
                     ))
 
+        return findings
+
+    def _analyze_form_error_cues(self, page_data: PageData) -> List[AgentFinding]:
+        findings = []
+        for el in page_data.form_elements:
+            border_color = el.computed_styles.get("borderColor", "")
+            has_red_border = "rgb(220, 53, 69)" in border_color
+            has_error_class = "error" in el.attributes.get("className", "") or "error" in el.attributes.get("class", "")
+            
+            if has_red_border or has_error_class:
+                has_aria_invalid = el.attributes.get("ariaInvalid") == "true" or el.attributes.get("aria-invalid") == "true"
+                if not has_aria_invalid:
+                    findings.append(AgentFinding(
+                        agent="visual",
+                        violation_type="form_error_cue",
+                        guideline="G205",
+                        element=el.html,
+                        selector=el.selector,
+                        issue="Form field indicates error status using color only.",
+                        impact="Users with visual impairments or color blindness cannot identify form errors.",
+                        fix="Provide textual notification of the error and set aria-invalid='true'.",
+                        confidence=0.9,
+                        source="heuristic",
+                        wcag_criterion="3.3.1",
+                        session_id=str(page_data.session_id)
+                    ))
+        return findings
+
+    def _analyze_text_status_cues(self, page_data: PageData) -> List[AgentFinding]:
+        findings = []
+        status_classes = {"danger", "success", "warning", "info", "error"}
+        for el in page_data.text_elements:
+            if el.computed_styles.get('display') == 'none':
+                continue
+            class_val = el.attributes.get("className", "") or el.attributes.get("class", "")
+            if any(sc in class_val for sc in status_classes):
+                html_lower = el.html.lower()
+                has_symbol = "✓" in el.html or "fa-" in html_lower or "check" in html_lower or "icon" in html_lower
+                if not has_symbol:
+                    findings.append(AgentFinding(
+                        agent="visual",
+                        violation_type="text_status_cue",
+                        guideline="G182",
+                        element=el.html,
+                        selector=el.selector,
+                        issue="Status or feedback text relies solely on color to convey meaning.",
+                        impact="Users with color blindness cannot distinguish the status message meaning.",
+                        fix="Add an icon, symbol (e.g. checkmark or cross), or explicit text prefix (e.g., 'Error:').",
+                        confidence=0.9,
+                        source="heuristic",
+                        wcag_criterion="1.4.1",
+                        session_id=str(page_data.session_id)
+                    ))
+        return findings
+
+    def _analyze_image_alternatives(self, page_data: PageData) -> List[AgentFinding]:
+        findings = []
+        for el in page_data.images:
+            if el.attributes.get("ariaHidden") == "true" or el.attributes.get("aria-hidden") == "true":
+                continue
+            w = el.bounding_box.get("width", 0)
+            h = el.bounding_box.get("height", 0)
+            if w > 0 and h > 0 and w <= 16 and h <= 16:
+                continue
+            
+            has_alt = bool(el.attributes.get("alt", "").strip())
+            has_label = bool(el.attributes.get("aria-label", "").strip()) or bool(el.attributes.get("ariaLabel", "").strip())
+            
+            if el.tag in ("svg", "img") and not (has_alt or has_label):
+                findings.append(AgentFinding(
+                    agent="visual",
+                    violation_type="image_alt",
+                    guideline="G111",
+                    element=el.html,
+                    selector=el.selector,
+                    issue="Non-text content (image/SVG) lacks a text alternative.",
+                    impact="Screen reader users cannot understand the purpose of the image.",
+                    fix="Add an alt attribute or aria-label describing the image content.",
+                    confidence=0.9,
+                    source="heuristic",
+                    wcag_criterion="1.1.1",
+                    session_id=str(page_data.session_id)
+                ))
         return findings

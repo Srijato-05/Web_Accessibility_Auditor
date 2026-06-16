@@ -42,7 +42,21 @@ class AuditWorker:
     
     def __init__(self, worker_id: str = "WORKER-01", engine: Optional[Any] = None, queue: Optional[RedisTaskQueue] = None):
         self.worker_id = worker_id
-        self.engine = engine if engine else create_async_engine(DATABASE_URL, echo=False)
+        self.engine = engine if engine else create_async_engine(DATABASE_URL, connect_args={"timeout": 30.0}, echo=False)
+        
+        # WAL journal mode optimization for SQLite high concurrency
+        from sqlalchemy import event # type: ignore
+        @event.listens_for(self.engine.sync_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                cursor.execute("PRAGMA synchronous=NORMAL;")
+            except Exception:
+                pass
+            finally:
+                cursor.close()
+
         self.queue = queue if queue else RedisTaskQueue(REDIS_URL, db_engine=self.engine)
         self.logger = auditor_logger.getChild(f"Worker.{worker_id}")
         self._active = True
@@ -59,6 +73,14 @@ class AuditWorker:
             return False, cpu_load, mem_load
         except Exception:
             return False, 0.0, 0.0
+
+    async def run(self):
+        """Alias for start to support legacy or alternative test interface calling run()."""
+        await self.start()
+
+    def stop(self):
+        """Stops the worker loop."""
+        self._active = False
 
     async def start(self):
         """Main event loop for task consumption."""
@@ -78,11 +100,17 @@ class AuditWorker:
                     await asyncio.sleep(5)
                     continue
 
-                task = await self.queue.pop_task(timeout=5)
-                if not task:
-                    continue
-                
-                await self._process_task(task)
+                try:
+                    task = await self.queue.pop_task(timeout=5)
+                    if not task:
+                        continue
+                    
+                    await self._process_task(task)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as loop_err:
+                    self.logger.error(f"Worker Loop Exception: {loop_err}")
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             self.logger.warning("Worker shutdown initiated.")
         finally:
@@ -91,9 +119,9 @@ class AuditWorker:
 
     async def _process_task(self, task: Dict[str, Any]):
         """Dispatches tasks to the appropriate service layer."""
-        task_id = task.get("id")
-        task_type = task.get("type")
-        data = task.get("data", {})
+        task_id = task.get("id") or task.get("task_id")
+        task_type = task.get("type") or "single_url_audit"
+        data = task.get("data") or task.get("payload") or {}
         url = data.get("url")
         
         if not url:
@@ -118,30 +146,81 @@ class AuditWorker:
     async def _run_site_audit(self, url: str):
         """Executes a comprehensive site audit with persistence isolation."""
         async with AsyncSession(self.engine) as db_session:
-            # 1. Initialize Infrastructure Components
+            # 1. Fetch Target Registry Profile
+            from auditor.infrastructure.target_repository import SqlAlchemyTargetRepository
+            target_repo = SqlAlchemyTargetRepository(db_session)
+            domain = await target_repo.get_domain_by_url(url)
+            profile = domain.scan_profile if (domain and domain.scan_profile) else {}
+            
+            # Extract parameters from profile with fallback defaults
+            max_depth = profile.get("depth", 2)
+            max_pages = profile.get("max_pages", 20)
+            concurrency = profile.get("concurrency", 3)
+
+            # Resilient Checkpoint Callback
+            target_url = url
+            async def checkpoint_cb(state: Any):
+                try:
+                    async with AsyncSession(self.engine) as cb_session:
+                        cb_repo = SqlAlchemyTargetRepository(cb_session)
+                        db_domain = await cb_repo.get_domain_by_url(target_url)
+                        if db_domain:
+                            if db_domain.scan_profile is None:
+                                db_domain.scan_profile = {}
+                            if state is None:
+                                db_domain.scan_profile.pop("checkpoint", None)
+                            else:
+                                db_domain.scan_profile["checkpoint"] = state
+                            await cb_repo.update_domain(db_domain)
+                            await cb_session.commit()
+                except Exception as cb_err:
+                    self.logger.warning(f"Resilient Checkpoint Save Failure in Worker for {target_url}: {cb_err}")
+
+            # 2. Initialize Infrastructure Components
             repo = SqlAlchemyAuditRepository(db_session)
-            browser = PlaywrightEngine(uuid4()) # Added missing session id
+            browser = PlaywrightEngine(uuid4(), config=profile)
             crawler = PlaywrightLinkExtractor()
             
-            # 2. Assemble Service Layer
+            # 3. Assemble Service Layer
             audit_service = AuditService(browser, repo)
             discovery_service = LinkDiscoveryService(crawler)
             
             crawl_orchestrator = CrawlService(
                 audit_service=audit_service,
                 crawler_service=discovery_service,
-                max_depth=2,
-                max_pages=20,
-                concurrency=3
+                max_depth=max_depth,
+                max_pages=max_pages,
+                concurrency=concurrency,
+                config=profile,
+                checkpoint_callback=checkpoint_cb
             )
             
-            # 3. Execution
+            # 4. Execution
             try:
                 self.logger.info(f"--- [ STARTING DISTRIBUTED AUDIT: {url} ] ---")
+                if domain:
+                    domain.mark_crawling()
+                    await target_repo.update_domain(domain)
+                    await db_session.commit()
+                
                 await browser.start() # Optimize: Start once for site-wide crawl
                 await crawl_orchestrator.run(url)
+                
+                # Fetch fresh domain instance for merge sanity
+                domain_fresh = await target_repo.get_domain_by_url(url)
+                if domain_fresh:
+                    domain_fresh.mark_active()
+                    if domain_fresh.scan_profile and "checkpoint" in domain_fresh.scan_profile:
+                        domain_fresh.scan_profile.pop("checkpoint", None)
+                    await target_repo.update_domain(domain_fresh)
+                    await db_session.commit()
                 self.logger.info(f"--- [ AUDIT COMPLETE: {url} ] ---")
             except Exception as e:
+                domain_fresh = await target_repo.get_domain_by_url(url)
+                if domain_fresh:
+                    domain_fresh.mark_failed(str(e))
+                    await target_repo.update_domain(domain_fresh)
+                    await db_session.commit()
                 self.logger.exception(f"Distributed Audit Failure [{url}]")
             finally:
                 if browser:

@@ -72,6 +72,10 @@ class TargetModel(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     last_audit_at: Optional[datetime] = None
     frequency_hours: Optional[Dict[str, Any]] = Field(sa_column=Column(JSON))
+    priority: int = Field(default=3)
+    retry_count: int = Field(default=0)
+    last_error: Optional[str] = Field(default=None)
+    scan_profile: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
 
 
 # TaskModel moved to task_model.py to avoid metadata registration conflicts.

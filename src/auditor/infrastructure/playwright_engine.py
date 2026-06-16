@@ -520,8 +520,11 @@ class PlaywrightEngine(IBrowserEngine):
                 _self.profile["userAgent"] = ua_map[user_agent_setting]
         
         # Ensure engine is active
-        if not _self.browser or not _self.browser.is_connected():
-            await _self.start()
+        try:
+            if not _self.browser or not _self.browser.is_connected():
+                await _self.start()
+        except Exception as e:
+            raise EngineError(f"Audit failed for {url}: {e}")
             
         br = _self.browser
         if not br:

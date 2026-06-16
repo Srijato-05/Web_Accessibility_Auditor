@@ -2,6 +2,10 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from auditor.application.worker import AuditWorker
+import sqlalchemy.event
+
+# Globally bypass SQLite pragma listening in tests since engine is mocked
+patch("sqlalchemy.event.listens_for", lambda *args, **kwargs: lambda f: f).start()
 
 @pytest.mark.asyncio
 async def test_worker_overload_and_backpressure():
@@ -103,7 +107,18 @@ async def test_worker_run_site_audit_success():
     
     mock_run = AsyncMock()
     
-    with patch("auditor.application.worker.AsyncSession"), \
+    mock_session = AsyncMock()
+    mock_exec_result = MagicMock()
+    mock_target = MagicMock(id="123", url="http://site.com", status="active", scan_profile=None)
+    # mock_target needs a dictionary for frequency_hours
+    mock_target.frequency_hours = {"hours": 24}
+    mock_exec_result.first.return_value = mock_target
+    mock_session.exec.return_value = mock_exec_result
+    
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    
+    with patch("auditor.application.worker.AsyncSession", return_value=mock_ctx), \
          patch("auditor.application.worker.PlaywrightEngine", return_value=mock_browser), \
          patch("auditor.application.worker.PlaywrightLinkExtractor", return_value=mock_crawler), \
          patch("auditor.application.worker.CrawlService.run", mock_run):
@@ -208,7 +223,17 @@ async def test_worker_run_site_audit_exception():
     
     mock_run = AsyncMock(side_effect=RuntimeError("Crawl failed"))
     
-    with patch("auditor.application.worker.AsyncSession"), \
+    mock_session = AsyncMock()
+    mock_exec_result = MagicMock()
+    mock_target = MagicMock(id="123", url="http://site.com", status="active", scan_profile=None)
+    mock_target.frequency_hours = {"hours": 24}
+    mock_exec_result.first.return_value = mock_target
+    mock_session.exec.return_value = mock_exec_result
+    
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    
+    with patch("auditor.application.worker.AsyncSession", return_value=mock_ctx), \
          patch("auditor.application.worker.PlaywrightEngine", return_value=mock_browser), \
          patch("auditor.application.worker.PlaywrightLinkExtractor", return_value=mock_crawler), \
          patch("auditor.application.worker.CrawlService.run", mock_run), \
@@ -262,3 +287,79 @@ async def test_worker_overload_mem_only():
         overloaded, cpu, mem = worker._is_system_overloaded()
         assert overloaded is True
         assert mem == 90.0
+
+@pytest.mark.asyncio
+async def test_worker_site_audit_checkpoint_callback():
+    worker = AuditWorker("TEST-WORKER")
+    
+    captured_callback = None
+    class FakeCrawlService:
+        def __init__(self, *args, **kwargs):
+            nonlocal captured_callback
+            captured_callback = kwargs.get("checkpoint_callback")
+        async def run(self, url):
+            pass
+            
+    mock_session = AsyncMock()
+    mock_target = MagicMock()
+    mock_target.scan_profile = None # will be set to {}
+    
+    mock_repo = AsyncMock()
+    mock_repo.get_domain_by_url.return_value = mock_target
+    
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_session
+    
+    mock_browser = MagicMock()
+    mock_browser.start = AsyncMock()
+    mock_browser.teardown = AsyncMock()
+    
+    mock_crawler = MagicMock()
+    mock_crawler.teardown = AsyncMock()
+    
+    with patch("auditor.application.worker.AsyncSession", return_value=mock_ctx), \
+         patch("auditor.infrastructure.target_repository.SqlAlchemyTargetRepository", return_value=mock_repo), \
+         patch("auditor.application.worker.PlaywrightEngine", return_value=mock_browser), \
+         patch("auditor.application.worker.PlaywrightLinkExtractor", return_value=mock_crawler), \
+         patch("auditor.application.worker.CrawlService", FakeCrawlService):
+         
+        await worker._run_site_audit("http://site.com")
+        
+        # Now execute the captured callback
+        assert captured_callback is not None
+        
+        # Case 1: state is not None
+        await captured_callback({"page": 1})
+        assert mock_target.scan_profile["checkpoint"] == {"page": 1}
+        
+        # Case 2: state is None
+        await captured_callback(None)
+        assert "checkpoint" not in mock_target.scan_profile
+        
+        # Case 3: Exception in callback
+        mock_repo.get_domain_by_url.side_effect = Exception("Db failure")
+        await captured_callback({"page": 2}) # should log warning and not raise
+
+@pytest.mark.asyncio
+async def test_worker_start_general_exception_loop():
+    mock_engine = AsyncMock()
+    worker = AuditWorker("TEST-WORKER", engine=mock_engine)
+    
+    call_count = 0
+    async def mock_pop(timeout):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise Exception("Temporary queue failure")
+        raise asyncio.CancelledError()
+        
+    with patch.object(worker, "_is_system_overloaded", return_value=(False, 0, 0)), \
+         patch.object(worker.queue, "pop_task", side_effect=mock_pop), \
+         patch.object(worker.queue, "connect", AsyncMock()), \
+         patch.object(worker.queue, "reset_abandoned_tasks", AsyncMock()), \
+         patch.object(worker.queue, "disconnect", AsyncMock()), \
+         patch.object(worker.engine, "dispose", AsyncMock()), \
+         patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+         
+        await worker.start()
+        mock_sleep.assert_called_with(1)

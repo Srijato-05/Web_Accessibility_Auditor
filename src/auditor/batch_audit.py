@@ -28,7 +28,20 @@ DATABASE_URL = "sqlite+aiosqlite:///./reports/data/audit_results.db"
 async def main():
     """Batch Audit Orchestrator CLI"""
     # Hardware/Database Engine Initialization
-    engine = create_async_engine(DATABASE_URL, echo=False)
+    engine = create_async_engine(DATABASE_URL, connect_args={"timeout": 30.0}, echo=False)
+    
+    # WAL journal mode optimization for SQLite high concurrency
+    from sqlalchemy import event # type: ignore
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
+        finally:
+            cursor.close()
     
     # Global Task Registry (Phase XIII)
     from auditor.infrastructure.task_model import task_metadata # type: ignore
@@ -38,6 +51,13 @@ async def main():
             await conn.run_sync(SQLModel.metadata.create_all)
             await conn.run_sync(task_metadata.create_all)
 
+        # Cleanup any orphaned crawling targets left in database from a previous run
+        try:
+            from auditor.presentation.api import cleanup_orphaned_targets
+            await cleanup_orphaned_targets()
+        except Exception:
+            pass
+
         # 3. CLI Argument Handling
         if "--help" in sys.argv or "-h" in sys.argv:
             print("""
@@ -45,23 +65,72 @@ Accessibility Auditor Batch CLI [v0.1.0]
 Usage: python batch_audit.py [options]
 
 Options:
-  --help, -h          Show this help message
-  --add-target [url]  Add a new target domain to the audit registry
-  --dispatch          Dispatch all active domains to the audit queue (Redis/SQLite)
-  --report            Generate a stakeholder report (HTML/JSON) from the latest session
-  --discover [url]    Autonomously discover and dispatch audit targets from sitemaps/robots.txt
-  --worker            Start an autonomous worker node to process the audit queue
-  --dashboard         Launch the real-time TUI cluster monitor
+  --help, -h                  Show this help message
+  --add-target [url]          Add a new target domain to the audit registry
+  --priority [1-5]            Priority level (1=highest, 5=lowest; used with --add-target)
+  --dispatch                  Dispatch all active targets to the audit queue (Redis/SQLite)
+  --status                    Display a detailed network health and target registry ledger status
+  --prune                     Remove all failed target records from the registry
+  --discover [url]            Autonomously discover and seed audit targets from sitemaps/robots.txt
+  --worker                    Start an autonomous worker node to process the audit queue
+  --dashboard                 Launch the real-time TUI cluster monitor
+  --run                       Trigger a parallel local batch run of all active targets
             """)
             return
 
+        if "--status" in sys.argv:
+            async with AsyncSession(engine) as db_session:
+                batch_repo = SqlAlchemyTargetRepository(db_session)
+                domains = await batch_repo.get_all_domains()
+                print("\n" + "="*80)
+                print(f"NETWORK SURVEILLANCE REGISTRY LEDGER ({len(domains)} hosts)")
+                print("="*80)
+                if not domains:
+                    print("No targets registered. Add one with --add-target [url].")
+                else:
+                    print(f"{'DOMAIN URL':<40} | {'STATUS':<10} | {'PRIORITY':<8} | {'RETRIES':<7} | {'LAST AUDIT'}")
+                    print("-"*80)
+                    for d in domains:
+                        last_scan = d.last_audit_at.isoformat() if d.last_audit_at else "Never"
+                        status_str = d.status.value if hasattr(d.status, 'value') else str(d.status)
+                        print(f"{d.url:<40} | {status_str:<10} | {d.priority:<8} | {d.retry_count:<7} | {last_scan}")
+                        if d.last_error:
+                            print(f"   ↳ Error: {d.last_error}")
+                        if d.scan_profile and "checkpoint" in d.scan_profile:
+                            cp = d.scan_profile["checkpoint"]
+                            visited_count = len(cp.get("visited_urls", []))
+                            pending_count = len(cp.get("pending_queue", []))
+                            print(f"   ↳ Active Checkpoint: {visited_count} pages audited, {pending_count} pending.")
+                print("="*80 + "\n")
+            return
+
+        if "--prune" in sys.argv:
+            async with AsyncSession(engine) as db_session:
+                from auditor.domain.models import DomainStatus
+                batch_repo = SqlAlchemyTargetRepository(db_session)
+                domains = await batch_repo.get_all_domains()
+                pruned_count = 0
+                for d in domains:
+                    if d.status == DomainStatus.FAILED:
+                        await batch_repo.delete_domain(d.url)
+                        pruned_count += 1
+                auditor_logger.info(f"Registry Pruned: Removed {pruned_count} failed target(s).")
+            return
+
         if len(sys.argv) >= 3 and sys.argv[1] == "--add-target":
+            priority = 3
+            if "--priority" in sys.argv:
+                try:
+                    p_index = sys.argv.index("--priority") + 1
+                    priority = int(sys.argv[p_index])
+                except Exception:
+                    pass
             async with AsyncSession(engine) as db_session:
                 batch_repo = SqlAlchemyTargetRepository(db_session)
                 target_url = sys.argv[2]
-                new_domain = AuditTarget(url=target_url)
+                new_domain = AuditTarget(url=target_url, priority=priority)
                 await batch_repo.add_domain(new_domain)
-                auditor_logger.info(f"Target Registered in Registry: {target_url}")
+                auditor_logger.info(f"Target Registered [Priority {priority}]: {target_url}")
                 
                 # Auto-dispatch if possible to make it user-friendly
                 auditor_logger.info("Auto-Dispatching target to Autonomous Queue...")
@@ -110,9 +179,11 @@ Options:
             await dash.run()
             return
 
-        # 4. Batch Execution
-        batch_orchestrator = BatchAuditManager(engine)
-        await batch_orchestrator.run_batch_audit()
+        if "--run" in sys.argv or len(sys.argv) == 1:
+            # 4. Batch Execution
+            batch_orchestrator = BatchAuditManager(engine)
+            await batch_orchestrator.run_batch_audit()
+            return
 
     except Exception as e:
         auditor_logger.critical(f"Critical System Failure: {e}")

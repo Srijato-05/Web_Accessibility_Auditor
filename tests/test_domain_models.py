@@ -71,7 +71,11 @@ class DummyTargetRepository(ITargetRepository):
         pass
     async def get_active_domains(self):
         return await super().get_active_domains()
+    async def get_all_domains(self):
+        return await super().get_all_domains()
     async def update_domain(self, domain):
+        pass
+    async def delete_domain(self, url: str) -> None:
         pass
 
 @pytest.mark.asyncio
