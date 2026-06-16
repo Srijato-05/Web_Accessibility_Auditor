@@ -12,7 +12,6 @@ import {
   Cpu,
   ExternalLink,
   ChevronDown,
-  Info,
   CheckSquare,
   Square
 } from 'lucide-react';

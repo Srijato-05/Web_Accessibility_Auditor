@@ -13,7 +13,6 @@ import {
   Loader2, 
   CheckCircle2, 
   AlertTriangle,
-  Sliders,
   Settings,
   X,
   RefreshCw,
@@ -21,17 +20,13 @@ import {
   Download,
   Search,
   SlidersHorizontal,
-  ExternalLink,
   Zap,
-  Filter,
   Check,
   ChevronUp,
   ChevronDown,
-  ArrowUpDown,
   AlertCircle,
   Upload,
-  ListPlus,
-  Clipboard
+  ListPlus
 } from 'lucide-react';
 
 interface Target {
@@ -86,7 +81,7 @@ export default function BatchAudit() {
   const [frequency, setFrequency] = useState(24);
   const [maxDepth, setMaxDepth] = useState(2);
   const [maxPages, setMaxPages] = useState(20);
-  const [strategy, setStrategy] = useState('fast');
+  const strategy = 'fast';
   const [discoverUrl, setDiscoverUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);

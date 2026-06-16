@@ -8,12 +8,8 @@ import {
   Layers, 
   ChevronLeft, 
   ChevronRight, 
-  Monitor, 
-  Smartphone,
   Eye,
   Settings,
-  HelpCircle,
-  Clock,
   Compass,
   AlertTriangle
 } from 'lucide-react';

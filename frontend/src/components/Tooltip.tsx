@@ -13,7 +13,7 @@ export function Tooltip({ content, children, id }: TooltipProps) {
   const hideTooltip = () => setIsVisible(false);
 
   // Clone children to inject accessibility props (focus triggers & aria-describedby link)
-  const triggerElement = React.cloneElement(children, {
+  const triggerElement = React.cloneElement(children as React.ReactElement<any>, {
     'aria-describedby': id,
     onMouseEnter: showTooltip,
     onMouseLeave: hideTooltip,
