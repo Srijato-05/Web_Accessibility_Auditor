@@ -243,11 +243,110 @@ async def start_audit(req: AuditRequest, background_tasks: BackgroundTasks):
         background_tasks.add_task(async_run_audit_worker, req.url)
         return {"session_id": session_id, "status": "started"}
 
+def _get_violations_data_from_session(s: AuditSession) -> list:
+    grouped = {}
+    for v in (s.violations or []):
+        impact_val = v.impact.value if hasattr(v.impact, 'value') else str(v.impact)
+        severity = impact_val.capitalize()
+        
+        # Categorization Logic for Insights.tsx (dynamically calculated for reliability)
+        from auditor.shared.compliance_mapper import ComplianceMapper
+        cat_name = ComplianceMapper.get_category(v.tags or [], v.rule_id or "", v.agent or "axe")
+        
+        comp_level = getattr(v, 'compliance_level', None)
+        if not comp_level or comp_level == "Non-Standard":
+            comp_level = ComplianceMapper.get_compliance_level(v.tags or [], v.impact)
+            
+        category = None
+        cat_lower = cat_name.lower()
+        for key, ui_val in UI_CATEGORY_MAP.items():
+            if key in cat_lower:
+                category = ui_val
+                break
+        
+        if not category:
+            rule_id_lower = (v.rule_id or "").lower()
+            for ui_val, keywords in UI_RULE_KEYWORD_MAP.items():
+                if any(x in rule_id_lower for x in keywords):
+                    category = ui_val
+                    break
+            if not category:
+                category = "Structure"
+
+        # Use the first node for selector and html if available
+        target_str = v.selector if hasattr(v, 'selector') else "Unknown"
+        html_str = ""
+        nodes_list = []
+        if hasattr(v, 'nodes') and v.nodes:
+            raw_target = v.nodes[0].get("target", target_str)
+            if isinstance(raw_target, list):
+                target_str = ", ".join(str(x) for x in raw_target)
+            else:
+                target_str = str(raw_target)
+            html_str = str(v.nodes[0].get("html", ""))
+            for node in v.nodes:
+                enriched_node = dict(node)
+                enriched_node["impact"] = impact_val
+                t_val = enriched_node.get("target", target_str)
+                if isinstance(t_val, list):
+                    enriched_node["target"] = ", ".join(str(x) for x in t_val)
+                nodes_list.append(enriched_node)
+        else:
+            nodes_list = [{"html": html_str or "N/A", "target": target_str, "failure_summary": v.description, "impact": impact_val}]
+            
+        session_str = str(s.id)
+        rule_str = v.rule_id or "generic"
+        selector_str = target_str or ""
+        stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:auditor:violation:{session_str}:{rule_str}:{selector_str}"))
+
+        if stable_id in grouped:
+            existing = grouped[stable_id]
+            # Merge nodes to avoid exact duplicates
+            existing_htmls = {n.get("html") for n in existing["nodes"]}
+            for node in nodes_list:
+                if node.get("html") not in existing_htmls:
+                    existing["nodes"].append(node)
+            
+            # Update occurrences count
+            existing["occurrences"] = len(existing["nodes"])
+            
+            # Take highest impact
+            impact_levels = {"critical": 4, "serious": 3, "moderate": 2, "minor": 1}
+            current_level = impact_levels.get(existing["impact"].lower(), 0)
+            new_level = impact_levels.get(impact_val.lower(), 0)
+            if new_level > current_level:
+                existing["impact"] = impact_val
+                existing["severity"] = severity
+        else:
+            grouped[stable_id] = {
+                "id": stable_id,
+                "rule_id": v.rule_id,
+                "impact": impact_val,
+                "description": v.description,
+                "target": target_str,
+                "html": html_str,
+                "help_url": v.help_url if hasattr(v, 'help_url') else "",
+                "occurrences": len(nodes_list),
+                "nodes": nodes_list,
+                # --- START FRONTEND ALIASES ---
+                "severity": severity,
+                "type": v.rule_id,
+                "message": v.description,
+                "category": category,
+                "agent": v.agent or "axe",
+                "compliance_level": comp_level or "Non-Standard",
+                "confidence_score": getattr(v, 'confidence_score', None),
+                "verification_status": getattr(v, 'verification_status', "unverified")
+                # --- END FRONTEND ALIASES ---
+            }
+    
+    return list(grouped.values())
+
 @router.get("/dashboard/summary")
 async def get_dashboard_summary():
     async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
-        recent = await repository.list_recent_sessions(limit=100)
+        recent = await repository.list_recent_sessions(limit=None)
 
         # Tally violations across all sessions using unique deduplicated occurrences
         total_critical: int = 0
@@ -264,7 +363,7 @@ async def get_dashboard_summary():
                 agent_counts["cognitive"] += s.agent_summary.get("cognitive_count", 0)
                 agent_counts["neural"] += s.agent_summary.get("neural_count", 0)
 
-            violations_data = await get_audit_violations(str(s.id))
+            violations_data = _get_violations_data_from_session(s)
             for v in violations_data:
                 for node in v.get("nodes", []):
                     all_violations += 1
@@ -291,8 +390,8 @@ async def get_dashboard_summary():
 
         # Build recent_scans list with the shape Dashboard.tsx needs
         recent_scans = []
-        for s in recent[:5]:
-            violations_data = await get_audit_violations(str(s.id))
+        for s in recent:
+            violations_data = _get_violations_data_from_session(s)
             nodes_count = sum(len(v.get("nodes", [])) for v in violations_data)
             crit = sum(1 for v in violations_data for node in v.get("nodes", []) if (node.get("impact") or v.get("impact") or "").lower() == "critical")
             score = max(0, round(100 - (crit * 10) - (nodes_count * 0.5)))
@@ -515,17 +614,33 @@ async def ping_graph():
 async def get_history():
     async with AsyncSession(engine) as db_session:
         repository = SqlAlchemyAuditRepository(db_session)
-        recent = await repository.list_recent_sessions(limit=20)
-        return [
-            {
+        recent = await repository.list_recent_sessions(limit=None)
+        
+        history_list = []
+        for s in recent:
+            violations_data = _get_violations_data_from_session(s)
+            levels = {v.get("compliance_level") for v in violations_data if v.get("compliance_level")}
+            if "Below A" in levels:
+                comp_lvl = "Below A"
+            elif "A" in levels:
+                comp_lvl = "A"
+            elif "AA" in levels:
+                comp_lvl = "AA"
+            elif "AAA" in levels:
+                comp_lvl = "AAA"
+            else:
+                comp_lvl = "AAA" if (s.status.value if hasattr(s.status, 'value') else str(s.status)) == "completed" else "N/A"
+                
+            history_list.append({
                 "id": str(s.id), 
                 "url": s.target_url, 
-                "date": s.started_at.isoformat() if s.started_at else datetime.datetime.now().isoformat(), 
+                "date": s.started_at.isoformat() if s.started_at else (s.created_at or datetime.datetime.now()).isoformat(), 
                 "issues": len(s.violations) if s.violations else 0,
-                "status": s.status.value,
+                "status": s.status.value if hasattr(s.status, 'value') else str(s.status),
+                "compliance_level": comp_lvl,
                 "agent_summary": s.agent_summary
-            } for s in recent
-        ]
+            })
+        return history_list
 
 class ScanRequest(BaseModel):
     url: str
