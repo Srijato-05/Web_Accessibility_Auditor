@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { client } from '../api/client.ts';
 import { Loader2, Download, Search, Shield, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-react';
+import { Tooltip } from '../components/Tooltip.tsx';
 
 export default function Audits() {
   const [scans, setScans] = useState<any[]>([]);
@@ -32,6 +33,16 @@ export default function Audits() {
     return matchesSearch && matchesStatus;
   });
 
+  const getOverallCompliance = (scansList: any[]) => {
+    const activeScans = scansList.filter((s: any) => s.status === 'completed' && s.compliance_level);
+    if (activeScans.length === 0) return 'N/A';
+    if (activeScans.some((s: any) => s.compliance_level === 'Below A')) return 'Below A';
+    if (activeScans.some((s: any) => s.compliance_level === 'A')) return 'A';
+    if (activeScans.some((s: any) => s.compliance_level === 'AA')) return 'AA';
+    if (activeScans.every((s: any) => s.compliance_level === 'AAA')) return 'AAA';
+    return 'N/A';
+  };
+
   const handleSort = (key: 'url' | 'status' | 'date') => {
     if (sortKey === key) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -60,14 +71,14 @@ export default function Audits() {
   );
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen">
+    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen fade-in-up">
       <header className="mb-10 border-b border-surface-border pb-8">
         <h1 className="text-3xl font-heading font-bold text-on-surface">Audits Ledger</h1>
         <p className="text-on-surface-variant mt-2 text-sm">Review full list of target domains and audit progress.</p>
       </header>
 
       {/* Quick counters grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 mb-8">
         <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px]">
           <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Total Targets</span>
           <span className="text-2xl font-heading font-bold text-on-surface mt-1">{scans.length}</span>
@@ -83,6 +94,18 @@ export default function Audits() {
         <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-warning">
           <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">In Progress</span>
           <span className="text-2xl font-heading font-bold text-warning mt-1">{scans.filter(s => s.status !== 'completed' && s.status !== 'failed').length}</span>
+        </div>
+        <div className="glass-panel p-4 flex flex-col justify-between min-h-[90px] border-l-4 border-l-secondary">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Overall Compliance</span>
+          <span className={`text-2xl font-heading font-bold mt-1 uppercase ${
+            getOverallCompliance(filteredScans) === 'AAA' ? 'text-primary font-bold' :
+            getOverallCompliance(filteredScans) === 'AA' ? 'text-secondary font-bold' :
+            getOverallCompliance(filteredScans) === 'A' ? 'text-warning font-bold' :
+            getOverallCompliance(filteredScans) === 'Below A' ? 'text-error font-bold' :
+            'text-on-surface-variant'
+          }`}>
+            {getOverallCompliance(filteredScans)}
+          </span>
         </div>
       </div>
 
@@ -103,19 +126,56 @@ export default function Audits() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto">
-          <label htmlFor="ledger-status-filter" className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Status:</label>
-          <select
-            id="ledger-status-filter"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-background text-on-surface border border-surface-border rounded-md px-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer w-full md:w-auto"
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto mt-2 md:mt-0" role="group" aria-label="Filter audits by execution status">
+          <span id="ledger-status-filter-label" className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mr-1">Status:</span>
+          <button
+            onClick={() => setStatusFilter('all')}
+            aria-pressed={statusFilter === 'all'}
+            aria-labelledby="ledger-status-filter-label"
+            className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+              statusFilter === 'all'
+                ? 'bg-primary text-background border-primary shadow-neon'
+                : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+            }`}
           >
-            <option value="all">All Audits</option>
-            <option value="completed">Completed Scans</option>
-            <option value="failed">Failed Scans</option>
-            <option value="pending">Pending Scans</option>
-          </select>
+            All ({scans.length})
+          </button>
+          <button
+            onClick={() => setStatusFilter('completed')}
+            aria-pressed={statusFilter === 'completed'}
+            aria-labelledby="ledger-status-filter-label"
+            className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+              statusFilter === 'completed'
+                ? 'bg-primary text-background border-primary shadow-neon'
+                : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+            }`}
+          >
+            Completed ({scans.filter(s => s.status === 'completed').length})
+          </button>
+          <button
+            onClick={() => setStatusFilter('failed')}
+            aria-pressed={statusFilter === 'failed'}
+            aria-labelledby="ledger-status-filter-label"
+            className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+              statusFilter === 'failed'
+                ? 'bg-primary text-background border-primary shadow-neon'
+                : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+            }`}
+          >
+            Failed ({scans.filter(s => s.status === 'failed').length})
+          </button>
+          <button
+            onClick={() => setStatusFilter('pending')}
+            aria-pressed={statusFilter === 'pending'}
+            aria-labelledby="ledger-status-filter-label"
+            className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+              statusFilter === 'pending'
+                ? 'bg-primary text-background border-primary shadow-neon'
+                : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+            }`}
+          >
+            Pending ({scans.filter(s => s.status !== 'completed' && s.status !== 'failed').length})
+          </button>
         </div>
       </div>
 
@@ -183,15 +243,26 @@ export default function Audits() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">
-                    <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
-                      scan.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
-                      scan.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
-                      scan.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
-                      scan.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
-                      'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
-                    }`}>
-                      {scan.compliance_level || 'N/A'}
-                    </span>
+                    <Tooltip
+                      id={`tooltip-${scan.id}`}
+                      content={
+                        scan.compliance_level === 'AAA' ? 'Meets full WCAG AAA requirements with optimal contrast and accessibility parameters.' :
+                        scan.compliance_level === 'AA' ? 'Meets standard WCAG AA guidelines. Some strict AAA contrast levels might not be reached.' :
+                        scan.compliance_level === 'A' ? 'Meets base Level A criteria only. Critical accessibility failures exist.' :
+                        scan.compliance_level === 'Below A' ? 'Below basic Level A standard. Critical accessibility disruptions detected.' :
+                        'No compliance rating is assigned yet for this page.'
+                      }
+                    >
+                      <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full cursor-help ${
+                        scan.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
+                        scan.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
+                        scan.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
+                        scan.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
+                        'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                      }`}>
+                        {scan.compliance_level || 'N/A'}
+                      </span>
+                    </Tooltip>
                   </td>
                   <td className="px-6 py-4 text-center">
                     <button

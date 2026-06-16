@@ -50,7 +50,7 @@ export default function GraphInsights() {
   if (!data) return <div className="min-h-screen bg-background flex items-center justify-center text-on-surface"><Loader2 className="animate-spin text-primary" size={48} aria-label="Loading Graph Insights" /></div>;
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 relative min-h-screen">
+    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 relative min-h-screen fade-in-up">
       {toastMsg && (
         <div className="fixed top-8 left-1/2 -translate-x-1/2 bg-surface text-primary border border-surface-border px-6 py-3 rounded-md shadow-flat z-50 font-bold tracking-widest flex items-center gap-3 uppercase text-sm">
            <Zap size={18} /> {toastMsg}

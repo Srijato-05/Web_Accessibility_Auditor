@@ -3,16 +3,25 @@ import { useTheme, type Theme } from './ThemeContext.tsx';
 import { LayoutDashboard, ScanLine, FileSpreadsheet, Settings, HelpCircle, Activity, Database } from 'lucide-react';
 
 export default function Sidebar() {
-  const { theme, setTheme } = useTheme();
+  const {
+    theme,
+    setTheme,
+    textSize,
+    setTextSize,
+    dyslexiaFont,
+    setDyslexiaFont,
+    reduceMotion,
+    setReduceMotion
+  } = useTheme();
   const location = useLocation();
 
   const menuItems = [
-    { name: 'Scan Console', path: '/', icon: ScanLine },
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Audits Ledger', path: '/audits', icon: FileSpreadsheet },
-    { name: 'Batch Console', path: '/batch', icon: Database },
+    { name: 'Single Scan', path: '/', icon: ScanLine },
+    { name: 'Batch Scan', path: '/batch', icon: Database },
+    { name: 'Ledger', path: '/audits', icon: FileSpreadsheet },
     { name: 'Settings', path: '/profile', icon: Settings },
-    { name: 'Help Center', path: '/help', icon: HelpCircle },
+    { name: 'Help', path: '/help', icon: HelpCircle },
   ];
 
   return (
@@ -62,6 +71,43 @@ export default function Sidebar() {
             <option value="hc-light">High Contrast Light</option>
             <option value="colorblind">Colorblind Assist</option>
           </select>
+        </div>
+
+        <div>
+          <label htmlFor="text-size-select" className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant block mb-2">Text Scale</label>
+          <select
+            id="text-size-select"
+            value={textSize}
+            onChange={(e) => setTextSize(e.target.value as any)}
+            className="w-full bg-background border border-surface-border rounded px-3 py-2 text-xs font-bold text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer uppercase tracking-wider font-heading"
+          >
+            <option value="normal">Normal (100%)</option>
+            <option value="large">Large (120%)</option>
+            <option value="extra-large">Extra Large (140%)</option>
+          </select>
+        </div>
+
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <label htmlFor="dyslexia-toggle" className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant cursor-pointer select-none">Dyslexia Font</label>
+            <input
+              id="dyslexia-toggle"
+              type="checkbox"
+              checked={dyslexiaFont}
+              onChange={(e) => setDyslexiaFont(e.target.checked)}
+              className="w-4 h-4 rounded bg-background border border-surface-border text-primary focus:ring-2 focus:ring-primary outline-none cursor-pointer"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <label htmlFor="motion-toggle" className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant cursor-pointer select-none">Reduce Motion</label>
+            <input
+              id="motion-toggle"
+              type="checkbox"
+              checked={reduceMotion}
+              onChange={(e) => setReduceMotion(e.target.checked)}
+              className="w-4 h-4 rounded bg-background border border-surface-border text-primary focus:ring-2 focus:ring-primary outline-none cursor-pointer"
+            />
+          </div>
         </div>
       </div>
     </nav>

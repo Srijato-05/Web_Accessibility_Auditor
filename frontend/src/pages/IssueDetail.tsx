@@ -32,7 +32,7 @@ export default function IssueDetail() {
   if (!data) return <div className="min-h-screen flex items-center justify-center text-on-surface bg-background"><Loader2 className="animate-spin text-primary" size={48} aria-label="Loading violation source..." /></div>;
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen">
+    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen fade-in-up">
       <header className="mb-8 border-b border-surface-border pb-8">
         <button onClick={() => navigate(`/insights/${audit_id || 'global'}`)} className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors mb-6 text-sm font-bold focus:ring-2 focus:ring-primary outline-none">
            <ArrowLeft size={16} aria-hidden="true" /> Back to Insights

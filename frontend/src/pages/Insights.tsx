@@ -148,7 +148,7 @@ export default function Insights() {
   });
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen">
+    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen fade-in-up">
       {/* Header */}
       <header className="mb-10 border-b border-surface-border pb-8">
         <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors mb-6 text-sm font-bold focus:ring-2 focus:ring-primary outline-none">

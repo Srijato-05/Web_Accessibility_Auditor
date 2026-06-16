@@ -11,10 +11,20 @@ vi.mock('react-router-dom', () => ({
 
 // Setup theme context mock
 const mockSetTheme = vi.fn();
+const mockSetTextSize = vi.fn();
+const mockSetDyslexiaFont = vi.fn();
+const mockSetReduceMotion = vi.fn();
+
 vi.mock('../components/ThemeContext.tsx', () => ({
   useTheme: () => ({
     theme: 'cyberpunk',
-    setTheme: mockSetTheme
+    setTheme: mockSetTheme,
+    textSize: 'normal',
+    setTextSize: mockSetTextSize,
+    dyslexiaFont: false,
+    setDyslexiaFont: mockSetDyslexiaFont,
+    reduceMotion: false,
+    setReduceMotion: mockSetReduceMotion
   })
 }));
 
@@ -30,7 +40,7 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('Accessibility Auditor')).toBeInTheDocument();
 
     // Check link render
-    const scanLink = screen.getByText('Scan Console');
+    const scanLink = screen.getByText('Single Scan');
     expect(scanLink.closest('a')).toHaveAttribute('href', '/');
 
     const dashboardLink = screen.getByText('Dashboard');

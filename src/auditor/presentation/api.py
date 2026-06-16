@@ -357,6 +357,10 @@ async def get_dashboard_summary():
         cat_counts = {"color_contrast": 0, "aria_semantics": 0, "keyboard_navigation": 0, "structure": 0}
 
         for s in recent:
+            status_str = s.status.value if hasattr(s.status, 'value') else str(s.status)
+            if status_str != "completed":
+                continue
+
             if hasattr(s, 'agent_summary') and s.agent_summary:
                 agent_counts["visual"] += s.agent_summary.get("visual_count", 0)
                 agent_counts["motor"] += s.agent_summary.get("motor_count", 0)
@@ -409,6 +413,33 @@ async def get_dashboard_summary():
             else:
                 comp_lvl = "AAA" if (s.status.value if hasattr(s.status, 'value') else str(s.status)) == "completed" else "N/A"
                 
+            # Calculate category counts and issues for this scan
+            scan_cat_counts = {"color_contrast": 0, "aria_semantics": 0, "keyboard_navigation": 0, "structure": 0}
+            scan_issues = {"critical": 0, "major": 0, "minor": 0}
+            for v in violations_data:
+                for node in v.get("nodes", []):
+                    # Tally issues
+                    impact = (node.get("impact") or v.get("impact") or "minor").lower()
+                    if impact == "critical":
+                        scan_issues["critical"] += 1
+                    elif impact in ("serious", "major"):
+                        scan_issues["major"] += 1
+                    else:
+                        scan_issues["minor"] += 1
+                    
+                    # Tally categories
+                    cat_name = v.get("category", "") or "General"
+                    if "perceivable" in cat_name.lower() or "color" in cat_name.lower():
+                        scan_cat_counts["color_contrast"] += 1
+                    elif "operable" in cat_name.lower() or "keyboard" in cat_name.lower():
+                        scan_cat_counts["keyboard_navigation"] += 1
+                    elif "understandable" in cat_name.lower() or "structure" in cat_name.lower():
+                        scan_cat_counts["structure"] += 1
+                    elif "robust" in cat_name.lower() or "aria" in cat_name.lower():
+                        scan_cat_counts["aria_semantics"] += 1
+                    else:
+                        scan_cat_counts["structure"] += 1
+
             recent_scans.append({
                 "id": str(s.id),
                 "url": s.target_url,
@@ -416,6 +447,8 @@ async def get_dashboard_summary():
                 "status": s.status.value if hasattr(s.status, 'value') else str(s.status),
                 "compliance_level": comp_lvl,
                 "date": (s.started_at or s.created_at or datetime.datetime.now()).isoformat(),
+                "categories": scan_cat_counts,
+                "issues": scan_issues,
             })
 
         health_score: int = max(0, round(100 - (total_critical * 5) - (all_violations * 0.2))) if recent else 100

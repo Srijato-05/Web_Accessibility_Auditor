@@ -52,7 +52,7 @@ export default function AuditReport() {
   }, [audit_id, navigate]);
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-20 pb-32 flex flex-col justify-center min-h-screen">
+    <div className="max-w-4xl mx-auto px-6 py-20 pb-32 flex flex-col justify-center min-h-screen fade-in-up">
       <div className="glass-panel p-10 relative overflow-hidden border-t-4 border-t-primary">
          {/* Futuristic Scanning animation bar */}
          <div className="scan-line"></div>

@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { client } from '../api/client.ts';
 import { Activity, Play, Loader2, Download } from 'lucide-react';
 import { GraphView } from '../components/GraphView.tsx';
+import { Tooltip } from '../components/Tooltip.tsx';
 
 interface DashboardSummary {
   health_score: number;
@@ -67,8 +68,97 @@ export default function Dashboard() {
     return matchesSearch && matchesStatus;
   });
 
+  const getOverallCompliance = (scansList: any[]) => {
+    const activeScans = scansList.filter((s: any) => s.status === 'completed' && s.compliance_level);
+    if (activeScans.length === 0) return 'N/A';
+    if (activeScans.some((s: any) => s.compliance_level === 'Below A')) return 'Below A';
+    if (activeScans.some((s: any) => s.compliance_level === 'A')) return 'A';
+    if (activeScans.some((s: any) => s.compliance_level === 'AA')) return 'AA';
+    if (activeScans.every((s: any) => s.compliance_level === 'AAA')) return 'AAA';
+    return 'N/A';
+  };
+
+  // Dynamically calculate statistics from the active filtered scans
+  const getDynamicStats = () => {
+    const defaultStats = {
+      monitored_hosts: 0,
+      critical: 0,
+      major: 0,
+      minor: 0,
+      total_violations: 0,
+      total_scanned_links: 0,
+      categories: {
+        color_contrast: 0,
+        aria_semantics: 0,
+        keyboard_navigation: 0,
+        structure: 0
+      }
+    };
+
+    if (!summary) return defaultStats;
+
+    // Filter to scans matching the search term
+    const allMatching = (summary.recent_scans || []).filter((scan: any) => 
+      scan.url.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    // Only count completed scans for violation stats
+    const searchFiltered = allMatching.filter((scan: any) => scan.status === 'completed');
+
+    if (!searchTerm.trim()) {
+      return {
+        monitored_hosts: new Set((summary.recent_scans || []).map(s => s.url)).size,
+        critical: summary.issues?.critical || 0,
+        major: summary.issues?.major || 0,
+        minor: summary.issues?.minor || 0,
+        total_violations: (summary.issues?.critical || 0) + (summary.issues?.major || 0) + (summary.issues?.minor || 0),
+        total_scanned_links: (summary.recent_scans || []).length,
+        categories: summary.categories || {
+          color_contrast: 0,
+          aria_semantics: 0,
+          keyboard_navigation: 0,
+          structure: 0
+        }
+      };
+    }
+
+    const stats = {
+      monitored_hosts: new Set(allMatching.map(s => s.url)).size,
+      critical: 0,
+      major: 0,
+      minor: 0,
+      total_violations: 0,
+      total_scanned_links: allMatching.length,
+      categories: {
+        color_contrast: 0,
+        aria_semantics: 0,
+        keyboard_navigation: 0,
+        structure: 0
+      }
+    };
+
+    searchFiltered.forEach((scan: any) => {
+      if (scan.issues) {
+        stats.critical += scan.issues.critical || 0;
+        stats.major += scan.issues.major || 0;
+        stats.minor += scan.issues.minor || 0;
+      }
+      if (scan.categories) {
+        stats.categories.color_contrast += scan.categories.color_contrast || 0;
+        stats.categories.aria_semantics += scan.categories.aria_semantics || 0;
+        stats.categories.keyboard_navigation += scan.categories.keyboard_navigation || 0;
+        stats.categories.structure += scan.categories.structure || 0;
+      }
+    });
+
+    stats.total_violations = stats.critical + stats.major + stats.minor;
+    return stats;
+  };
+
+  const dynamicStats = getDynamicStats();
+
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen">
+    <div className="max-w-6xl mx-auto px-6 py-10 pb-32 min-h-screen fade-in-up">
       <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-surface-border pb-8">
         <div>
           <h1 className="text-3xl font-heading font-bold text-on-surface">Dashboard</h1>
@@ -88,7 +178,7 @@ export default function Dashboard() {
             <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Monitored Hosts</span>
             <div className="flex items-baseline gap-2 mt-4">
               <span className="text-5xl font-heading font-bold text-primary">
-                {summary.recent_scans ? new Set(summary.recent_scans.map(s => s.url)).size : 0}
+                {dynamicStats.monitored_hosts}
               </span>
               <span className="text-sm font-mono text-on-surface-variant">Domains</span>
             </div>
@@ -99,7 +189,7 @@ export default function Dashboard() {
             <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Critical & Major Violations</span>
             <div className="flex items-baseline gap-2 mt-4">
               <span className="text-4xl font-heading font-bold text-error">
-                {summary.issues ? (summary.issues.critical + summary.issues.major) : 0}
+                {dynamicStats.critical + dynamicStats.major}
               </span>
               <span className="text-xs font-mono text-on-surface-variant">High-Risk</span>
             </div>
@@ -110,7 +200,7 @@ export default function Dashboard() {
             <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Total Violations</span>
             <div className="flex items-baseline gap-2 mt-4">
               <span className="text-4xl font-heading font-bold text-secondary">
-                {summary.issues ? (summary.issues.critical + summary.issues.major + summary.issues.minor) : 0}
+                {dynamicStats.total_violations}
               </span>
               <span className="text-xs font-mono text-on-surface-variant">All Issues</span>
             </div>
@@ -119,7 +209,7 @@ export default function Dashboard() {
 
           <div className="glass-panel p-6 border-t-4 border-t-primary/50 flex flex-col justify-between min-h-[140px]">
             <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Total Scanned Links</span>
-            <span className="text-4xl font-heading font-bold text-on-surface mt-4 block">{summary.recent_scans ? summary.recent_scans.length : 0}</span>
+            <span className="text-4xl font-heading font-bold text-on-surface mt-4 block">{dynamicStats.total_scanned_links}</span>
             <p className="text-[10px] text-on-surface-variant mt-2 leading-relaxed">Number of structural paths crawler completed.</p>
           </div>
         </div>
@@ -132,11 +222,11 @@ export default function Dashboard() {
               <h3 className="text-sm font-heading font-bold text-on-surface uppercase tracking-wider mb-4">Heuristic Severity Distribution</h3>
               <div className="space-y-4">
                 {[
-                  { label: 'Critical Errors', count: summary.issues ? summary.issues.critical : 0, color: 'bg-error', desc: 'Severe accessibility barriers preventing interactions.' },
-                  { label: 'Major Disruptions', count: summary.issues ? summary.issues.major : 0, color: 'bg-warning', desc: 'Substantial layout reflow, contrast, or navigation loops.' },
-                  { label: 'Minor Advisories', count: summary.issues ? summary.issues.minor : 0, color: 'bg-primary', desc: 'Missing meta descriptors, language codes, or structural nodes.' }
+                  { label: 'Critical Errors', count: dynamicStats.critical, color: 'bg-error', desc: 'Severe accessibility barriers preventing interactions.' },
+                  { label: 'Major Disruptions', count: dynamicStats.major, color: 'bg-warning', desc: 'Substantial layout reflow, contrast, or navigation loops.' },
+                  { label: 'Minor Advisories', count: dynamicStats.minor, color: 'bg-primary', desc: 'Missing meta descriptors, language codes, or structural nodes.' }
                 ].map((item) => {
-                  const total = (summary.issues ? (summary.issues.critical + summary.issues.major + summary.issues.minor) : 0) || 1;
+                  const total = dynamicStats.total_violations || 1;
                   const percentage = Math.min(100, Math.max(8, (item.count / total) * 100));
                   const testId = `severity-count-${item.label.toLowerCase().replace(/\s+/g, '-')}`;
                   return (
@@ -223,13 +313,133 @@ export default function Dashboard() {
           </div>
         </section>
 
+
+        {/* WCAG Compliance Checklist Deck (Idea 4) */}
+        <section aria-labelledby="wcag-checklist-deck-title" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 id="wcag-checklist-deck-title" className="text-xl font-heading font-bold text-on-surface">WCAG Conformance Checklist Deck</h2>
+              <p className="text-xs text-on-surface-variant mt-1">Status of core criteria compiled from active crawler scans</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[
+              {
+                id: '1.4.3',
+                title: 'Contrast (Minimum)',
+                desc: 'Text elements must meet minimum contrast thresholds.',
+                violations: dynamicStats.categories.color_contrast,
+                color: 'text-secondary',
+                strokeColor: '#00f2fe',
+                level: 'AA/AAA'
+              },
+              {
+                id: '2.1.1',
+                title: 'Keyboard Access',
+                desc: 'All interactive elements must respond to keyboard tabs.',
+                violations: dynamicStats.categories.keyboard_navigation,
+                color: 'text-primary',
+                strokeColor: '#39ff14',
+                level: 'A/AAA'
+              },
+              {
+                id: '1.3.1',
+                title: 'ARIA & Semantics',
+                desc: 'Assistive tech needs proper label roles & descriptors.',
+                violations: dynamicStats.categories.aria_semantics,
+                color: 'text-warning',
+                strokeColor: '#ffb703',
+                level: 'A/AA'
+              },
+              {
+                id: '2.4.1',
+                title: 'HTML Structure',
+                desc: 'Landmark hierarchy and skips should guide traversals.',
+                violations: dynamicStats.categories.structure,
+                color: 'text-error',
+                strokeColor: '#ff0055',
+                level: 'A/AA'
+              }
+            ].map((card) => {
+              const score = Math.max(0, 100 - (card.violations * 10));
+              // SVG Circle parameters
+              const radius = 24;
+              const circumference = 2 * Math.PI * radius;
+              const offset = circumference - (score / 100) * circumference;
+
+              return (
+                <div key={card.id} className="glass-panel p-5 flex flex-col justify-between min-h-[180px] hover:border-primary/40 transition-all group relative overflow-hidden bg-surface-container-low">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-on-surface-variant bg-surface-highlight/30 px-2 py-0.5 rounded border border-surface-border/50">WCAG {card.id} ({card.level})</span>
+                      <h3 className="text-sm font-bold text-on-surface mt-2.5 group-hover:text-primary transition-colors">{card.title}</h3>
+                    </div>
+                    
+                    {/* SVG Progress Ring */}
+                    <div className="relative w-12 h-12 shrink-0 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90">
+                        <circle
+                          cx="24"
+                          cy="24"
+                          r={radius}
+                          className="stroke-surface-border/30"
+                          strokeWidth="3"
+                          fill="transparent"
+                        />
+                        <circle
+                          cx="24"
+                          cy="24"
+                          r={radius}
+                          stroke={card.strokeColor}
+                          strokeWidth="3"
+                          fill="transparent"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={offset}
+                          className="transition-all duration-700 ease-out"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className="absolute text-[10px] font-mono font-bold text-on-surface">{score}%</span>
+                    </div>
+                  </div>
+                  
+                  <p className="text-[10px] text-on-surface-variant leading-relaxed mt-2">{card.desc}</p>
+                  
+                  <div className="flex items-center justify-between border-t border-surface-border/30 pt-3 mt-3">
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-on-surface-variant font-bold">
+                      {card.violations === 0 ? '0 Violations' : `${card.violations} Violations`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         {/* Mission History Table */}
         <section aria-labelledby="recent-history-title">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-            <h2 id="recent-history-title" className="text-xl font-heading font-bold text-on-surface">Recent Mission History</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 id="recent-history-title" className="text-xl font-heading font-bold text-on-surface">Recent Mission History</h2>
+              {filteredScans.length > 0 && (
+                <div className="flex items-center gap-2 bg-surface-highlight/40 px-3 py-1 rounded border border-surface-border text-xs">
+                  <span className="text-on-surface-variant font-medium">Overall Combined Compliance:</span>
+                  <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded ${
+                    getOverallCompliance(filteredScans) === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
+                    getOverallCompliance(filteredScans) === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
+                    getOverallCompliance(filteredScans) === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
+                    getOverallCompliance(filteredScans) === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
+                    'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                  }`}>
+                    {getOverallCompliance(filteredScans)}
+                  </span>
+                </div>
+              )}
+            </div>
             
             {/* Filter controls */}
-            <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full md:w-auto mt-2 md:mt-0">
               <input
                 type="text"
                 placeholder="Search Domain..."
@@ -237,15 +447,41 @@ export default function Dashboard() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="bg-background text-on-surface border border-surface-border rounded-md px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary focus:outline-none w-full md:w-48 placeholder:text-on-surface-variant/50 font-mono"
               />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-background text-on-surface border border-surface-border rounded-md px-3 py-1.5 text-xs focus:ring-1 focus:ring-primary focus:outline-none cursor-pointer font-mono"
-              >
-                <option value="all">All Logs</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-              </select>
+              <div className="flex items-center gap-2" role="group" aria-label="Filter scans by execution status">
+                <button
+                  onClick={() => setStatusFilter('all')}
+                  aria-pressed={statusFilter === 'all'}
+                  className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+                    statusFilter === 'all'
+                      ? 'bg-primary text-background border-primary shadow-neon'
+                      : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+                  }`}
+                >
+                  All ({summary.recent_scans?.length || 0})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('completed')}
+                  aria-pressed={statusFilter === 'completed'}
+                  className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+                    statusFilter === 'completed'
+                      ? 'bg-primary text-background border-primary shadow-neon'
+                      : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+                  }`}
+                >
+                  Completed ({summary.recent_scans?.filter((s: any) => s.status === 'completed').length || 0})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('failed')}
+                  aria-pressed={statusFilter === 'failed'}
+                  className={`px-3 py-1.5 text-xs font-bold font-heading rounded-md border transition-all focus:ring-2 focus:ring-primary outline-none ${
+                    statusFilter === 'failed'
+                      ? 'bg-primary text-background border-primary shadow-neon'
+                      : 'bg-surface text-on-surface-variant border-surface-border hover:text-on-surface'
+                  }`}
+                >
+                  Failed ({summary.recent_scans?.filter((s: any) => s.status === 'failed').length || 0})
+                </button>
+              </div>
             </div>
           </div>
           <div className="flat-panel overflow-hidden border-t-2 border-t-secondary/30">
@@ -281,15 +517,26 @@ export default function Dashboard() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full ${
-                          log.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
-                          log.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
-                          log.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
-                          log.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
-                          'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
-                        }`}>
-                          {log.compliance_level || 'N/A'}
-                        </span>
+                        <Tooltip
+                          id={`tooltip-${log.id}`}
+                          content={
+                            log.compliance_level === 'AAA' ? 'Meets full WCAG AAA requirements with optimal contrast and accessibility parameters.' :
+                            log.compliance_level === 'AA' ? 'Meets standard WCAG AA guidelines. Some strict AAA contrast levels might not be reached.' :
+                            log.compliance_level === 'A' ? 'Meets base Level A criteria only. Critical accessibility failures exist.' :
+                            log.compliance_level === 'Below A' ? 'Below basic Level A standard. Critical accessibility disruptions detected.' :
+                            'No compliance rating is assigned yet for this page.'
+                          }
+                        >
+                          <span className={`text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full cursor-help ${
+                            log.compliance_level === 'AAA' ? 'bg-primary/10 text-primary border border-primary/20' :
+                            log.compliance_level === 'AA' ? 'bg-secondary/10 text-secondary border border-secondary/20' :
+                            log.compliance_level === 'A' ? 'bg-warning/10 text-warning border border-warning/20' :
+                            log.compliance_level === 'Below A' ? 'bg-error/10 text-error border border-error/20' :
+                            'bg-on-surface/10 text-on-surface-variant border border-surface-border/50'
+                          }`}>
+                            {log.compliance_level || 'N/A'}
+                          </span>
+                        </Tooltip>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <button

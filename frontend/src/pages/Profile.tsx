@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { client } from '../api/client.ts';
-import { LogOut, Settings, Shield, FileText, Loader2 } from 'lucide-react';
+import { LogOut, Settings, Shield, FileText, Loader2, Keyboard } from 'lucide-react';
+import { useTheme } from '../components/ThemeContext.tsx';
 
 export default function Profile() {
+  const { enableHotkeys, setEnableHotkeys } = useTheme();
   const navigate = useNavigate();
   const [profile, setProfile] = useState<any>(null);
 
@@ -152,7 +154,7 @@ export default function Profile() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-on-surface p-8 max-w-4xl mx-auto pb-32">
+    <div className="min-h-screen bg-background text-on-surface p-8 max-w-4xl mx-auto pb-32 fade-in-up">
       <header className="mb-10 pt-4 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-surface-border pb-8">
         <div>
           <h1 className="text-3xl font-heading font-bold text-on-surface">Settings Center</h1>
@@ -403,6 +405,31 @@ export default function Profile() {
                      className={`w-14 h-8 rounded-full flex items-center transition-colors p-1 cursor-pointer ${skipExternal ? 'bg-primary' : 'bg-surface-highlight border border-surface-border'}`}
                   >
                      <div className={`w-6 h-6 rounded-full bg-background transition-transform ${skipExternal ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                  </button>
+               </div>
+            </div>
+         </div>
+
+         {/* Accessibility & Navigation Preferences */}
+         <div className="glass-panel p-8 border-none bg-surface-container-low">
+            <h2 className="text-xs text-on-surface-variant uppercase tracking-widest font-bold mb-6 flex items-center gap-2">
+               <Keyboard size={14} className="text-primary" aria-hidden="true" /> Accessibility Shortcuts
+            </h2>
+
+            <div className="space-y-6">
+               <div className="flex items-center justify-between">
+                  <div>
+                     <h3 className="font-bold text-sm text-on-surface">Keyboard Navigation hotkeys</h3>
+                     <p className="text-xs text-on-surface-variant mt-1 leading-normal">Permit dynamic system adjustments and navigation via Alt + [Key] sequences.</p>
+                  </div>
+                  <button 
+                     onClick={() => setEnableHotkeys(!enableHotkeys)}
+                     role="switch"
+                     aria-checked={enableHotkeys}
+                     aria-label="Toggle Keyboard Shortcuts"
+                     className={`w-14 h-8 rounded-full flex items-center transition-colors p-1 cursor-pointer ${enableHotkeys ? 'bg-primary' : 'bg-surface-highlight border border-surface-border'}`}
+                  >
+                     <div className={`w-6 h-6 rounded-full bg-background transition-transform ${enableHotkeys ? 'translate-x-6' : 'translate-x-0'}`}></div>
                   </button>
                </div>
             </div>

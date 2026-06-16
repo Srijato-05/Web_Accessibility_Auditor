@@ -5,7 +5,7 @@ export default function Privacy() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-background text-on-surface p-8 max-w-4xl mx-auto pb-32">
+    <div className="min-h-screen bg-background text-on-surface p-8 max-w-4xl mx-auto pb-32 fade-in-up">
       <header className="mb-8 border-b border-surface-border pb-8">
         <button onClick={() => navigate('/profile')} className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors mb-6 text-xs uppercase tracking-widest font-bold focus:ring-2 focus:ring-primary outline-none">
            <ArrowLeft size={16} /> Back to Profile
